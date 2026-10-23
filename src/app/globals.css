@@ -1,26 +1,174 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Engineering computation pad: pale green paper, graphite ink,
+  ballpoint blue for "better", correction red for "worse".
+*/
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #e9f0e2;
+  --paper-raised: #f3f7ee;
+  --grid: #d3e1ca;
+  --grid-major: #bfd2b4;
+  --graphite: #23291f;
+  --pencil: #5f6a58;
+  --ballpoint: #1f3fa6;
+  --correction: #c4302b;
+  --ochre: #94650f;
+  --highlight: rgb(244 226 77 / 0.75);
+
+  --background: var(--paper);
+  --foreground: var(--graphite);
+  --card: var(--paper-raised);
+  --card-foreground: var(--graphite);
+  --popover: var(--paper-raised);
+  --popover-foreground: var(--graphite);
+  --primary: var(--graphite);
+  --primary-foreground: var(--paper);
+  --secondary: var(--grid);
+  --secondary-foreground: var(--graphite);
+  --muted: #dfe9d6;
+  --muted-foreground: var(--pencil);
+  --accent: #dfe9d6;
+  --accent-foreground: var(--graphite);
+  --destructive: var(--correction);
+  --border: var(--grid-major);
+  --input: var(--grid-major);
+  --ring: var(--ballpoint);
+  --radius: 0.25rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-grid: var(--grid);
+  --color-graphite: var(--graphite);
+  --color-pencil: var(--pencil);
+  --color-ballpoint: var(--ballpoint);
+  --color-correction: var(--correction);
+  --color-ochre: var(--ochre);
+
+  --font-sans: var(--font-schibsted);
+  --font-mono: var(--font-martian);
+  --font-display: var(--font-shoulders);
+  --font-hand: var(--font-kalam);
+  --font-heading: var(--font-shoulders);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    background-color: var(--paper);
+    color: var(--graphite);
+    /* 4mm minor grid, heavier line every 5 squares, as on a computation pad */
+    background-image:
+      linear-gradient(var(--grid-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size:
+      80px 80px,
+      80px 80px,
+      16px 16px,
+      16px 16px;
+    background-position: -1px -1px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ballpoint);
+    outline-offset: 2px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* The pen loop around the best run draws itself once on load. */
+@keyframes pen-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ink-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) rotate(-4deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) rotate(-4deg);
+  }
+}
+.pen-loop path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pen-draw 700ms cubic-bezier(0.6, 0.1, 0.3, 1) 450ms forwards;
+}
+.pen-note {
+  opacity: 0;
+  transform: rotate(-4deg);
+  animation: ink-in 300ms ease-out 1100ms forwards;
+}
+/* Highlighter swipe over whatever a fix changed; holds, then fades off the page. */
+@keyframes highlighter {
+  0%,
+  45% {
+    background-color: var(--highlight);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.fix-mark {
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  animation: highlighter 4s ease-out forwards;
+}
+
+/* A run row you jumped to from an insight: same highlighter, on the whole row. */
+.run-flash > td {
+  animation: highlighter 2.5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pen-loop path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .pen-note {
+    animation: none;
+    opacity: 1;
+  }
 }
