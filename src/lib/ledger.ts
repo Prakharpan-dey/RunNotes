@@ -20,6 +20,10 @@ export type LedgerRow = {
   primary: MetricCell;
   secondary: MetricCell | null;
   isBest: boolean;
+  /** The best main-metric score among earlier runs, to compare against. Null for the first scored run. */
+  bestBefore: { n: number; value: number } | null;
+  /** Config of the run before this one, for showing what changed. Null for the first run. */
+  prevConfig: Record<string, unknown> | null;
   config: Record<string, unknown>;
   summary: Record<string, Scalar>;
 };
@@ -56,7 +60,13 @@ export function buildLedger(runs: Run[], metrics: MetricSet): LedgerRow[] {
     return { value, delta, improved: improved(spec, delta) };
   };
 
-  const rows = oldestFirst.map((run, i): LedgerRow => ({
+  const better = (a: number, b: number) => (metrics.primary.higherIsBetter ? a > b : a < b);
+  let bestSoFar: { n: number; value: number } | null = null;
+  const rows = oldestFirst.map((run, i): LedgerRow => {
+    const bestBefore = bestSoFar;
+    const v = num(run.summary[metrics.primary.key]);
+    if (v !== null && (!bestSoFar || better(v, bestSoFar.value))) bestSoFar = { n: i + 1, value: v };
+    return {
     id: run.id,
     n: i + 1,
     name: run.name,
@@ -66,11 +76,13 @@ export function buildLedger(runs: Run[], metrics: MetricSet): LedgerRow[] {
     primary: cell(run, metrics.primary),
     secondary: metrics.secondary ? cell(run, metrics.secondary) : null,
     isBest: false,
+    bestBefore,
+    prevConfig: i > 0 ? oldestFirst[i - 1].config : null,
     config: run.config,
     summary: run.summary,
-  }));
+    };
+  });
 
-  const better = (a: number, b: number) => (metrics.primary.higherIsBetter ? a > b : a < b);
   const best = rows
     .filter((r) => r.primary.value !== null)
     .reduce<LedgerRow | null>((a, r) => (!a || better(r.primary.value!, a.primary.value!) ? r : a), null);

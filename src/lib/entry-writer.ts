@@ -27,11 +27,11 @@ The notes were dictated with voice typing. Expect filler words (um, uh, like, so
 Rules:
 - Use only what the notes and the run data say. Do not invent hypotheses, observations or plans the person didn't express.
 - Never write metric values or metric changes (scores, percentages, deltas) in any field. The app shows the real numbers from W&B next to your entry. You may say a metric improved, got worse or stayed flat, using METRIC DIRECTIONS.
-- changes: start from CONFIG CHANGES, formatted "key: old -> new". Add any other change the person mentions that isn't in the config (code, data, preprocessing). If there is no previous run, list the main setup choices instead.
+- changes: start from CONFIG CHANGES, formatted "key: old -> new". Add any other change the person mentions that isn't in the config (code, data, preprocessing). If there is no previous run, list the main setup choices instead, as "key: value".
 - If the notes contradict the config about what changed, trust the config and add an observation pointing out the mismatch.
 - verdict: "keep" if the person wants to build on this run, "discard" if they'd drop it, "inconclusive" if they say it's unclear. If they don't say, use METRIC DIRECTIONS: primary metric improved -> keep, got worse -> discard, mixed or no previous run -> inconclusive.
 - title: plain English a non-ML reader can follow, at most 8 words, no numbers from metrics. Example: "Switching to LightGBM made scores worse".
-- hypothesis: one sentence, or "" if they didn't say what they expected.
+- hypothesis: one sentence on what they expected BEFORE seeing the result ("If the embeddings carry signal, the score should drop"). Never a result or conclusion; those go in observations. "" if they didn't say what they expected.
 - Write in the person's own voice ("I"), concise, no "the user".`;
 
 export function configChanges(prev: Run | null, run: Run): ConfigChange[] {
