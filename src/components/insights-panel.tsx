@@ -56,20 +56,24 @@ function PredictionLine({ p, onGo }: { p: PredictionResult; onGo: (n: number) =>
   return (
     <p className="mt-1 text-[13px] leading-relaxed text-pencil">
       <span className="font-hand text-[16px] text-graphite">“{p.quote}”</span>{" "}
+      {/* Wraps between phrases on a phone; each number stays with its label. */}
       <span className="whitespace-nowrap">
         Predicted {METRIC_NAME[p.metric]} {p.comparison}{" "}
-        <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>; actual on <RunLink n={p.tested_run} onGo={onGo} />{" "}
-        <span className="font-mono text-[12px] text-graphite">{p.actual.toFixed(3)}</span>{" "}
-        <span
-          className={cn(
-            "font-mono text-[11px] tabular-nums",
-            p.better === true ? "text-ballpoint" : p.better === false ? "text-correction" : "text-pencil",
-          )}
-          title={p.better ? `Better than predicted (${p.metric === "val_rmse" ? "lower" : "higher"} is better)` : "Worse than predicted"}
-        >
-          {p.delta > 0 ? "+" : p.delta < 0 ? "−" : "±"}
-          {Math.abs(p.delta).toFixed(3)} vs prediction
-        </span>
+        <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>;
+      </span>{" "}
+      <span className="whitespace-nowrap">
+        actual on <RunLink n={p.tested_run} onGo={onGo} />{" "}
+        <span className="font-mono text-[12px] text-graphite">{p.actual.toFixed(3)}</span>
+      </span>{" "}
+      <span
+        className={cn(
+          "font-mono text-[11px] whitespace-nowrap tabular-nums",
+          p.better === true ? "text-ballpoint" : p.better === false ? "text-correction" : "text-pencil",
+        )}
+        title={p.better ? `Better than predicted (${p.metric === "val_rmse" ? "lower" : "higher"} is better)` : "Worse than predicted"}
+      >
+        {p.delta > 0 ? "+" : p.delta < 0 ? "−" : "±"}
+        {Math.abs(p.delta).toFixed(3)} vs prediction
       </span>
     </p>
   );

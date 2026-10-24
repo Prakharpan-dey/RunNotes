@@ -48,7 +48,7 @@ export function TryIt({ run, limit, windowHours }: { run: DemoRunSummary; limit:
 
       <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-y border-dashed border-graphite/25 py-2 font-mono text-[12px]">
         <div className="flex gap-2">
-          <dt className="text-pencil">run {run.n}</dt>
+          <dt className="whitespace-nowrap text-pencil">run {run.n}</dt>
           <dd>
             <a href={run.url} target="_blank" rel="noreferrer" className="rounded-sm text-ballpoint underline underline-offset-4">
               {run.name}
