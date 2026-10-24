@@ -1,117 +1,172 @@
 # RunNotes
 
-**A lab notebook for ML experiments that you fill in by talking.** After a training run, hold Fn and ramble for twenty seconds. RunNotes turns that into a journal entry with the run's real numbers from Weights & Biases, and keeps a running list of what has actually moved the score.
+**The experiment journal you fill in by talking.**
 
-**Live:** https://run-notes.vercel.app (no login: try the demo at the top, or connect your own W&B project under **Your project**)
+RunNotes turns a few seconds of spoken notes after a training run into a structured journal entry, backed by the run's real numbers from [Weights & Biases](https://wandb.ai). Across runs, it keeps track of what actually moved your score, what made no difference, and where your own predictions were wrong.
 
-Built for *No Hands: The Wispr Challenge* (WeMakeDevs × Wispr Flow), Builders track.
+**Live:** [run-notes.vercel.app](https://run-notes.vercel.app). No sign-up needed: try the demo, or connect your own W&B project.
 
 ---
 
-## The problem
+## Why RunNotes
 
-After every training run I'm supposed to write down what I changed, what I saw and what I'll try next. It takes me 20 to 40 minutes, so mostly I skip it. Two weeks later I can't say why run 14 beat run 9, and writing up a report means digging through W&B and old chat messages.
+W&B records what happened in a run: the config, the metrics, the curves. It doesn't record *why*: what you expected, what you noticed in the outputs, what you suspect went wrong, and what you plan to try next. That reasoning usually lives in your head, a chat thread or nowhere. Two weeks later nobody can say why run 14 beat run 9.
 
-W&B keeps the numbers. It doesn't keep the reasoning: what I expected, what I noticed, what I suspected went wrong.
+Writing it down takes long enough that it gets skipped. RunNotes makes it a twenty-second habit: finish a run, say what happened, done.
 
-**Who it's for:** anyone who runs a lot of experiments alone and has to explain them later: students, Kaggle competitors, researchers. The first user is me, on my SHL grammar-scoring runs.
+It's built for people who run many experiments and have to explain them later: researchers, students, Kaggle competitors and small ML teams.
 
-## What it does
+## Features
 
-1. **Talk after a run.** Expand a run, hold Fn with Wispr Flow, and say what happened. Filler words and self-corrections ("twenty MFCCs, no wait, forty") are expected and cleaned up.
-2. **Get an entry.** A title, what changed, what I saw, what's next, and a keep / discard / inconclusive verdict. The numbers come from W&B, never from the model.
-3. **Fix it by voice.** Say what's wrong ("I said *nice*, I meant *noise*") and the entry and the raw notes are corrected. The changed words are highlighted, and every earlier version is kept.
-4. **See what the runs add up to.** The insights panel rebuilds after every entry:
-   - **Lever:** a change that beat the best score so far.
-   - **No effect:** a change that landed within noise of the best.
-   - **Regression:** a change that made things much worse, and what fixed it.
-   - **Prediction check:** something I predicted in my notes ("Pearson above 0.6") checked against what W&B actually logged.
-5. **Use it on your own runs.** Connect your own W&B project and pick the metric you care about (lower or higher is better, plus an optional second one). You get the full journal in your own workspace, separate from mine.
+- **Dictate an entry.** Open a run and talk through what you changed and what you saw. Filler words, half sentences and self-corrections ("twenty MFCCs, no wait, forty") are expected and cleaned up.
+- **Structured entries.** Every entry has a plain-English title, what changed, observations, next steps, tags and a keep / discard / inconclusive verdict. Metrics come from W&B, never from the model.
+- **Fix by voice.** Say what's wrong ("the verdict should be keep") and both the entry and your original notes are corrected. The changed words are highlighted, and every previous version is kept.
+- **Insights across runs.** A panel that rebuilds after every entry:
+  - **Lever:** a change that set a new best score.
+  - **No effect:** a change that landed within noise of the best.
+  - **Regression:** a change that made things much worse, and what fixed it.
+  - **Prediction check:** a prediction from your notes ("Pearson above 0.6", "should beat run 4") compared with what W&B logged.
+- **Any project, any metric.** Connect a W&B project and choose the metric that matters, whether lower or higher is better, plus an optional second one.
+- **Built for voice.** Every input is designed for speech. It works well with system-wide dictation tools such as Wispr Flow, macOS Dictation or Windows Voice Typing, and typing works too.
 
-## Why the numbers can be trusted
+## How it works
+
+1. **Runs** are read live from the W&B GraphQL API: config, summary metrics and state.
+2. **Your notes** and the run data go to Gemini, which returns a strict JSON entry. Zod validates it, and invalid or incomplete replies are retried with feedback.
+3. **Numbers are attached in code.** The changes in config and metrics against the previous run are computed from W&B and stored with the entry.
+4. **Insights** are computed in code first, then written up. Code walks your runs in order, tracks the best score on the main metric, and decides which facts exist. Gemini only writes one sentence per fact.
+
+### Why the numbers can be trusted
 
 The model writes words; code decides facts.
 
-- Every metric shown comes straight from the W&B API. Entries and insights are checked for metric values the model copied in, and sent back if it did.
-- Levers, no-effects and regressions are computed in code: walk the runs in order, track the best score on the main metric, compare. A move within 1.5% of the best counts as noise, and a run more than 15% worse is a regression. The same rules apply to every project, whatever its metric.
-- For predictions, Gemini only extracts what I said (metric, value, "above / below / around / beat run N"). Code checks the value is really in my notes, then works out the actual result, the difference and its colour from W&B. "Around" means within 3%.
-- Gemini runs at temperature 0 for insights and only writes one sentence per fact that code has already decided. It can't add or drop insights.
+- Every metric shown comes straight from W&B. Entries and insights are checked for metric values the model copied in, including spelled-out ones like "zero point six seven", and sent back if found.
+- Levers, no-effects and regressions follow fixed rules. A move within **1.5%** of the best score counts as noise, and a run more than **15%** worse is a regression. The same rules apply to every project.
+- For predictions, the model only extracts what you said: the metric, the value, and above / below / around / beat run N. Code checks that the value really appears in your notes, then works out the actual result, the difference and its colour from W&B. "Around" means within 3%.
+- Insights run at temperature 0, and the model can't add or remove insights. Wrong-length headlines and missing sentences fall back to templates.
 
-## How I used Wispr Flow
+## Using it
 
-Flow is on both sides of this project.
+The app has three areas:
 
-- **Building it:** the spec and every prompt to Claude Code were dictated with Flow: features, bug reports, design changes and fixes, spoken the way I'd brief a teammate.
-- **Using it:** RunNotes is designed to be fed by voice. The text boxes say "Hold Fn and talk it through", the prompts expect spoken input, and the Fix it box exists because dictation is fast but not perfect. One of my real entries was corrected from "nice" to "noise" by voice.
+| | |
+|---|---|
+| **Try it yourself** | A one-off demo on a sample run. Dictate or type, and you get a real entry card that isn't saved. Limited to 5 tries per visitor every 4 hours. |
+| **Journal** | The owner's journal. Public and read-only for visitors; the owner unlocks writing with a passcode. |
+| **Your project** | Your own workspace on your own W&B project, with everything above: write entries, fix them and rebuild insights. |
 
-## Try it
+### Connecting your project
 
-Open https://run-notes.vercel.app.
+1. Go to **Your project → Connect your W&B project**.
+2. Enter your W&B API key (from [wandb.ai/authorize](https://wandb.ai/authorize)), your entity and your project name.
+3. Optionally add a Gemini API key (free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)). Without one, a workspace gets **5 AI calls a day**, about 2 entries, since each entry also rebuilds insights. With your own key there's no limit.
+4. **Check connection.** RunNotes lists the numeric metrics your runs log. Pick the main one and whether lower or higher is better, plus an optional second metric.
+5. **Connect.** You land in your journal.
 
-- **Try it yourself:** the box at the top uses run 4, my current best. Dictate or type what you'd say after that run and you'll get a real entry card, labelled *Demo entry, not saved*. Limited to 5 tries per visitor every 4 hours.
-- **My journal:** my real runs, entries and insights. It's read-only for visitors; I unlock it with a passcode to log runs.
-- **Your project:** choose **Connect your W&B project**, then enter your W&B API key, entity and project. RunNotes lists the metrics your runs log; pick your main one and you get your own journal with Write entry, Fix it and Regenerate.
-  - Your keys stay in your browser tab (`sessionStorage`) and are only sent with your own requests. They're never stored or logged.
-  - A Gemini key is optional. Without one you get 5 free AI calls a day, about 2 entries. With your own free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) there's no limit.
-  - **Disconnect** clears the keys. Your workspace stays in that browser and comes back when you reconnect the same project.
+**Disconnect** clears your keys. Your workspace stays tied to that browser and comes back when you reconnect the same project.
 
----
+## Security and privacy
 
-## Run it yourself
+- **Your API keys are never stored.** They're kept in your browser tab's `sessionStorage`, sent only as request headers on your own requests, and used in memory for that request. No database table has a column for them.
+- **Keys are kept out of errors and logs.** Every error message on the workspace paths is scrubbed of the keys in that request, and workspace responses are sent with `Cache-Control: no-store`.
+- **Workspaces are isolated.** Entries and insights are stored per workspace, so a workspace can't read or write the owner's journal or another workspace.
+- **Writes are checked on the server.** The owner journal needs a signed, httpOnly cookie, issued after a passcode check that is limited to 10 tries per 15 minutes. Hiding a button is never the only protection.
+- **Rate limits** are enforced in Postgres with an atomic counter, storing only a hash of the visitor's IP: the demo, connection checks, free AI calls and workspace saves.
+- **Row-level security is on** for every table, with no policies, so only the server (using the service role key) can read or write data.
 
-**Needs:** Node 20+, a W&B project, a Supabase project and a Gemini API key.
+## Self-hosting
+
+**Requirements:** Node.js 20+, a Supabase project, a W&B account and a Gemini API key.
 
 ```bash
+git clone https://github.com/Prakharpan-dey/RunNotes.git
+cd RunNotes
 npm install
-cp .env.example .env.local   # then fill it in
-npm run dev
+cp .env.example .env.local   # fill in the values below
+npm run dev                  # http://localhost:3000
 ```
 
-**Environment variables** (all server-only; none are sent to the browser):
+### Environment variables
 
-| Name | What it's for |
+All of them are server-only; none are exposed to the browser.
+
+| Name | Required | Purpose |
+|---|---|---|
+| `WANDB` | Yes | W&B API key for the owner journal |
+| `SUPABASE_URL` | Yes | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server access to Supabase |
+| `GEMINI_API_KEY` | Yes | Used by the owner journal, the demo and workspaces without their own key |
+| `OWNER_PASSCODE` | Recommended | Unlocks owner mode. Without it the owner journal is read-only for everyone |
+| `GEMINI_MODELS` | No | Models to try in order, e.g. `gemini-3.5-flash,gemini-3.5-flash-lite` |
+
+### Database
+
+In the Supabase SQL editor, run the files in `supabase/` in order:
+
+1. `entries.sql`
+2. `002_entry_history.sql`
+3. `003_insights.sql`
+4. `004_rate_limits.sql`
+5. `005_workspaces.sql`
+
+### Configuration
+
+| Setting | Where |
 |---|---|
-| `WANDB` | W&B API key, to read the owner journal's runs |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Where entries, insights, workspaces and rate limits are stored |
-| `GEMINI_API_KEY` | Writing entries, fixes and insights, for the owner journal, the demo and workspaces without their own key |
-| `OWNER_PASSCODE` | Unlocks owner mode (footer → Owner). Without it the owner journal is read-only |
-| `GEMINI_MODELS` | Optional. Models to try in order, e.g. `gemini-3.5-flash,gemini-3.5-flash-lite` |
+| Owner journal's W&B entity and project | `WANDB_ENTITY`, `WANDB_PROJECT` in `src/lib/wandb.ts` |
+| Owner journal's metrics and directions | `OWNER_METRICS` in `src/lib/metrics.ts` |
+| Insight thresholds (noise, regression, "around") | `NOISE_REL`, `REGRESSION_REL`, `AROUND_REL` in `src/lib/metrics.ts` |
+| Free AI calls per workspace per day | `WORKSPACE_AI_LIMIT` in `src/lib/limits.ts` |
+| Demo run | `DEMO_RUN_NUMBER` in `src/lib/demo.ts` |
 
-**Database:** run these in the Supabase SQL editor, in order: `supabase/entries.sql`, `002_entry_history.sql`, `003_insights.sql`, `004_rate_limits.sql`, `005_workspaces.sql`. Row-level security is on with no policies, so only the server can read or write. No table stores an API key.
+### Deployment
 
-**Pointing "My journal" at your project:** set `WANDB_ENTITY` and `WANDB_PROJECT` in `src/lib/wandb.ts` and `OWNER_METRICS` in `src/lib/metrics.ts`. The demo run is `DEMO_RUN_NUMBER` in `src/lib/demo.ts`, and the free workspace limit is `WORKSPACE_AI_LIMIT` in `src/lib/limits.ts`. Visitors don't need any of this; they connect at `/connect`.
+RunNotes is a standard Next.js app and deploys to [Vercel](https://vercel.com) as is. Import the repository, add the environment variables, and deploy. Choose a function region close to your Supabase project, because each request makes several database calls.
 
-**Deploy:** import the repo on Vercel, add the environment variables, deploy. Pick a function region near your Supabase project.
+## Architecture
 
-## How it's built
+**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind CSS · shadcn/ui · Supabase (Postgres) · Gemini via `@google/genai` · Zod · Vercel
 
-Next.js 16 (App Router) · Tailwind · shadcn/ui · Supabase (Postgres) · Gemini via `@google/genai` · Zod · Vercel
+Every request is resolved to one journal:
+- **the owner's**: server-side keys, plus a signed cookie for writes;
+- **or a visitor workspace**: a random UUID, with that visitor's keys in request headers.
 
-Every request is for one journal: the owner's (server keys, an owner cookie for writes) or a visitor workspace (a random ID, with the visitor's keys in request headers, never stored).
+The same code paths serve both.
 
-| Route | Does |
+### API
+
+| Route | Purpose |
 |---|---|
-| `GET /api/runs` | Runs, config and summary metrics from the W&B GraphQL API |
-| `POST /api/entry` | Notes + run data → Gemini → Zod-checked entry → Supabase *(owner, or the visitor's own workspace)* |
-| `POST /api/entry/fix` | Applies a spoken correction to the entry and the notes; keeps the old version in `history` |
-| `GET/POST /api/insights` | Latest insights / rebuild them |
-| `POST /api/demo/entry` | The public demo: writes an entry for run 4 without saving it, rate-limited |
-| `POST/DELETE /api/owner` | Unlock or leave owner mode with a signed, httpOnly cookie |
-| `POST /api/workspace/verify` | Checks a visitor's W&B project (and Gemini key, if given) and lists the metrics their runs log |
-| `POST /api/workspace` | Creates or updates a visitor workspace with their chosen metrics |
-| `GET /api/workspace/journal` | Runs, entries and insights for a visitor workspace |
+| `GET /api/runs` | Runs, config and summary metrics from W&B |
+| `POST /api/entry` | Write an entry from spoken notes |
+| `POST /api/entry/fix` | Apply a spoken correction; the previous version is kept in `history` |
+| `GET /api/insights` · `POST /api/insights` | Latest insights · rebuild them |
+| `POST /api/demo/entry` | Demo entry, not saved; rate-limited |
+| `POST /api/owner` · `DELETE /api/owner` | Unlock · leave owner mode |
+| `POST /api/workspace/verify` | Check a W&B project (and an optional Gemini key) and list its metrics |
+| `POST /api/workspace` | Create or update a workspace and its metric choices |
+| `GET /api/workspace/journal` | Runs, entries and insights for a workspace |
 
-Key files:
-- `src/lib/context.ts`: whose journal a request is for, and the workspace limits.
-- `src/lib/entry-writer.ts`: entries and fixes.
-- `src/lib/llm.ts`: the Gemini wrapper, with model fallback and per-key quota tracking.
-- `src/lib/insights.ts`: facts in code, then sentences.
-- `src/lib/metrics.ts`: metric sets and thresholds.
-- `src/lib/config-words.ts`: config changes as plain phrases.
+Writing or fixing an entry rebuilds insights in the background (`after()`). The page polls until the new version is ready.
 
-## Known limits
+### Code map
 
-- **Gemini's free tier** allows about 20 requests a day per model. The owner journal, the demo and workspaces without their own key share the server's key. RunNotes falls back to a lighter model when one runs out, but heavy use needs a key with billing.
-- **A workspace lives in one browser.** Its ID is kept in that browser's `localStorage`, so another browser or device starts a new, empty workspace. Anyone holding a workspace ID and that project's W&B key could open it.
+| Path | What's there |
+|---|---|
+| `src/lib/context.ts` | Resolving the journal for a request, workspace limits, error redaction |
+| `src/lib/entry-writer.ts` | Entries and fixes: prompts, validation, metric-leak checks |
+| `src/lib/insights.ts` | Insight facts in code, prediction extraction, sentence writing |
+| `src/lib/llm.ts` | Gemini wrapper with model fallback and per-key quota tracking |
+| `src/lib/metrics.ts` | Metric sets and thresholds |
+| `src/lib/wandb.ts` | W&B GraphQL client |
+| `src/lib/config-words.ts` | Config changes as readable phrases ("switching from Ridge to LightGBM") |
+| `src/app/connect`, `src/app/workspace` | Connecting a project and the workspace journal |
+| `supabase/` | Database schema, in order |
+
+## Limitations
+
+- **Gemini's free tier** allows around 20 requests per model per day. The owner journal, the demo and workspaces without their own key share the server's key. RunNotes falls back to a lighter model when one is exhausted, but heavier use needs a key with billing enabled.
+- **A workspace belongs to one browser.** Its ID is kept in `localStorage`, so another browser or device starts a new, empty workspace. Anyone holding a workspace ID and that project's W&B key could open it.
+- **Predictions are checked against the run they refer to:** the next run, or the same run for "I expected this to…". Predictions about runs further ahead aren't checked.
+- **Only W&B is supported** as a run source, and only Gemini as a model provider. The model layer (`src/lib/llm.ts`) is built so other providers can be added.
 - **Supabase free projects pause** after a week without activity.
-- **Predictions are matched to the next run** (or the same run, for "I expected this to…"). A prediction about a run further ahead isn't checked.
