@@ -6,12 +6,14 @@ import type { Comparison, InsightType, MetricKey, PredictionResult, RunFact, Sav
 const TYPE_LABEL: Record<InsightType, string> = {
   lever: "Lever",
   no_effect: "No effect",
+  regression: "Regression",
   prediction_check: "Prediction check",
 };
 
 const TYPE_STYLE: Record<InsightType, string> = {
   lever: "border-ballpoint text-ballpoint",
   no_effect: "border-pencil/60 text-pencil",
+  regression: "border-correction text-correction",
   prediction_check: "border-ochre text-ochre",
 };
 
@@ -57,10 +59,17 @@ function PredictionLine({ p, onGo }: { p: PredictionResult; onGo: (n: number) =>
     <p className="mt-1 text-[13px] leading-relaxed text-pencil">
       <span className="font-hand text-[16px] text-graphite">“{p.quote}”</span>{" "}
       {/* Wraps between phrases on a phone; each number stays with its label. */}
-      <span className="whitespace-nowrap">
-        Predicted {METRIC_NAME[p.metric]} {p.comparison}{" "}
-        <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>;
-      </span>{" "}
+      {p.comparison === "beat_run" && p.target_run ? (
+        <span className="whitespace-nowrap">
+          Predicted {METRIC_NAME[p.metric]} to beat <RunLink n={p.target_run} onGo={onGo} />{" "}
+          <span className="font-mono text-[12px] text-graphite">{p.predicted.toFixed(3)}</span>;
+        </span>
+      ) : (
+        <span className="whitespace-nowrap">
+          Predicted {METRIC_NAME[p.metric]} {p.comparison}{" "}
+          <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>;
+        </span>
+      )}{" "}
       <span className="whitespace-nowrap">
         actual on <RunLink n={p.tested_run} onGo={onGo} />{" "}
         <span className="font-mono text-[12px] text-graphite">{p.actual.toFixed(3)}</span>
@@ -209,6 +218,12 @@ export function InsightsPanel({
                           <Fact key={f.n} fact={f} metric={metric} onGo={onGoToRun} />
                         ))}
                         {x.comparison && <ComparisonChip c={x.comparison} />}
+                        {x.recovery && (
+                          <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+                            <span className="text-[11px] text-pencil">recovered</span>
+                            <ComparisonChip c={x.recovery} />
+                          </span>
+                        )}
                         <span className="text-[11px] text-pencil">{metric} from W&B</span>
                       </p>
                     </div>

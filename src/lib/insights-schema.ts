@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-export const INSIGHT_TYPES = ["lever", "no_effect", "prediction_check"] as const;
+export const INSIGHT_TYPES = ["lever", "no_effect", "regression", "prediction_check"] as const;
 export type InsightType = (typeof INSIGHT_TYPES)[number];
 export const METRIC_KEYS = ["val_rmse", "val_pearson"] as const;
 export type MetricKey = (typeof METRIC_KEYS)[number];
-export const COMPARATORS = ["above", "below", "around"] as const;
+/** "beat_run" means beating another run's score on the metric; its value comes from W&B. */
+export const COMPARATORS = ["above", "below", "around", "beat_run"] as const;
 export type Comparator = (typeof COMPARATORS)[number];
 export const HEADLINE_MAX_WORDS = 15;
 
@@ -17,9 +18,13 @@ export const PredictionExtractSchema = z.object({
     .array(
       z.object({
         run: z.int().min(1).describe("The run number whose notes contain the prediction"),
-        metric: z.enum(METRIC_KEYS).describe("val_rmse for RMSE/error/loss, val_pearson for Pearson/correlation"),
-        comparison: z.enum(COMPARATORS).describe("above, below or around the predicted value"),
-        value: z.number().describe("The predicted value as a number, e.g. 0.6 for 'zero point six'"),
+        about: z
+          .enum(["this_run", "next_run"])
+          .describe("this_run if it was an expectation for the run these notes are about; next_run if it's about the next experiment"),
+        metric: z.enum(METRIC_KEYS).describe("val_rmse for RMSE/error/loss/score, val_pearson for Pearson/correlation"),
+        comparison: z.enum(COMPARATORS).describe("above, below or around a value, or beat_run to beat another run's score"),
+        value: z.number().nullable().describe("The predicted value as a number, e.g. 0.6 for 'zero point six'. null for beat_run"),
+        beat_run: z.int().min(1).nullable().describe("For beat_run: the run number to beat, e.g. 4 for 'beat run four'. Otherwise null"),
         quote: z.string().max(200).describe("The words of the prediction, copied from the notes"),
       }),
     )
@@ -63,7 +68,10 @@ export type PredictionResult = {
   tested_run: number;
   metric: MetricKey;
   comparison: Comparator;
+  /** The predicted value, or for beat_run the W&B score of the run to beat. */
   predicted: number;
+  /** beat_run only: the run whose score was the target. */
+  target_run?: number;
   actual: number;
   /** actual - predicted */
   delta: number;
@@ -81,6 +89,8 @@ export type Insight = {
   metric?: MetricKey | null;
   facts: RunFact[];
   comparison: Comparison | null;
+  /** Regression only: best so far -> the run that got back within noise of it. */
+  recovery?: Comparison | null;
   prediction?: PredictionResult;
   /** Older saved insights only: the quoted prediction. */
   predicted?: string | null;
