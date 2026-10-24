@@ -1,36 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RunNotes
 
-## Getting Started
+**A lab notebook for ML experiments that you fill in by talking.** After a training run, hold Fn and ramble for twenty seconds. RunNotes turns that into a journal entry with the run's real numbers from Weights & Biases, and keeps a running list of what has actually moved the score.
 
-First, run the development server:
+**Live:** https://run-notes.vercel.app (no login; try it at the top of the page)
+
+Built for *No Hands: The Wispr Challenge* (WeMakeDevs × Wispr Flow), Builders track.
+
+---
+
+## The problem
+
+After every training run I'm supposed to write down what I changed, what I saw and what I'll try next. It takes me 20 to 40 minutes, so mostly I skip it. Two weeks later I can't say why run 14 beat run 9, and writing up a report means digging through W&B and old chat messages.
+
+W&B keeps the numbers. It doesn't keep the reasoning: what I expected, what I noticed, what I suspected went wrong.
+
+**Who it's for:** anyone who runs a lot of experiments alone and has to explain them later: students, Kaggle competitors, researchers. The first user is me, on my SHL grammar-scoring runs.
+
+## What it does
+
+1. **Talk after a run.** Expand a run, hold Fn with Wispr Flow, and say what happened. Filler words and self-corrections ("twenty MFCCs, no wait, forty") are expected and cleaned up.
+2. **Get an entry.** A title, what changed, what I saw, what's next, and a keep / discard / inconclusive verdict. The numbers come from W&B, never from the model.
+3. **Fix it by voice.** Say what's wrong ("I said *nice*, I meant *noise*") and the entry and the raw notes are corrected. The changed words are highlighted, and every earlier version is kept.
+4. **See what the runs add up to.** The insights panel rebuilds after every entry:
+   - **Lever:** a change that beat the best score so far.
+   - **No effect:** a change that landed within noise of the best.
+   - **Regression:** a change that made things much worse, and what fixed it.
+   - **Prediction check:** something I predicted in my notes ("Pearson above 0.6") checked against what W&B actually logged.
+
+## Why the numbers can be trusted
+
+The model writes words; code decides facts.
+
+- Every metric shown comes straight from the W&B API. Entries and insights are checked for metric values the model copied in, and sent back if it did.
+- Levers, no-effects and regressions are computed in code: walk the runs in order, track the best `val_rmse`, compare. A move smaller than 0.01 counts as noise.
+- For predictions, Gemini only extracts what I said (metric, value, "above / below / around / beat run N"). Code checks the value is really in my notes, then works out the actual result, the difference and its colour from W&B.
+- Gemini runs at temperature 0 for insights and only writes one sentence per fact that code has already decided. It can't add or drop insights.
+
+## How I used Wispr Flow
+
+Flow is on both sides of this project.
+
+- **Building it:** the spec and every prompt to Claude Code were dictated with Flow: features, bug reports, design changes and fixes, spoken the way I'd brief a teammate.
+- **Using it:** RunNotes is designed to be fed by voice. The text boxes say "Hold Fn and talk it through", the prompts expect spoken input, and the Fix it box exists because dictation is fast but not perfect. One of my real entries was corrected from "nice" to "noise" by voice.
+
+## Try it
+
+Open https://run-notes.vercel.app. The **Try it yourself** box at the top uses run 4, my current best. Dictate or type what you'd say after that run and you'll get a real entry card, labelled *Demo entry, not saved*. It's limited to 5 tries per visitor every 4 hours.
+
+The journal below is read-only for visitors. I unlock it with a passcode to log runs.
+
+---
+
+## Run it yourself
+
+**Needs:** Node 20+, a W&B project, a Supabase project and a Gemini API key.
 
 ```bash
+npm install
+cp .env.example .env.local   # then fill it in
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**Environment variables** (all server-only; none are sent to the browser):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Name | What it's for |
+|---|---|
+| `WANDB` | W&B API key, to read runs |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Where entries, insights and rate limits are stored |
+| `GEMINI_API_KEY` | Writing entries, fixes and insights |
+| `OWNER_PASSCODE` | Unlocks owner mode (footer → Owner). Without it the app is read-only |
+| `GEMINI_MODELS` | Optional. Models to try in order, e.g. `gemini-3.5-flash,gemini-3.5-flash-lite` |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Database:** run these in the Supabase SQL editor, in order: `supabase/entries.sql`, `002_entry_history.sql`, `003_insights.sql`, `004_rate_limits.sql`. Row-level security is on with no policies, so only the server can read or write.
 
-## Learn More
+**Your own W&B project:** set `WANDB_ENTITY` and `WANDB_PROJECT` in `src/lib/wandb.ts`. The metrics it compares (`val_rmse`, `val_pearson`) are in `src/lib/ledger.ts`, and the demo run is `DEMO_RUN_NUMBER` in `src/lib/demo.ts`.
 
-To learn more about Next.js, take a look at the following resources:
+**Deploy:** import the repo on Vercel, add the environment variables, deploy. Pick a function region near your Supabase project.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## How it's built
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Next.js 16 (App Router) · Tailwind · shadcn/ui · Supabase (Postgres) · Gemini via `@google/genai` · Zod · Vercel
 
-## Deploy on Vercel
+| Route | Does |
+|---|---|
+| `GET /api/runs` | Runs, config and summary metrics from the W&B GraphQL API |
+| `POST /api/entry` | Notes + run data → Gemini → Zod-checked entry → Supabase *(owner only)* |
+| `POST /api/entry/fix` | Applies a spoken correction to the entry and the notes; keeps the old version in `history` *(owner only)* |
+| `GET/POST /api/insights` | Latest insights / rebuild them *(rebuild is owner only)* |
+| `POST /api/demo/entry` | The public demo: writes an entry for run 4 without saving it, rate-limited |
+| `POST/DELETE /api/owner` | Unlock or leave owner mode with a signed, httpOnly cookie |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Key files: `src/lib/entry-writer.ts` (entries, fixes, the Gemini helper with model fallback), `src/lib/insights.ts` (facts in code, then sentences), `src/lib/config-words.ts` (config changes as plain phrases).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Known limits
+
+- **One W&B project, one metric family.** It's built around my SHL runs; other projects need the constants above changed.
+- **Gemini's free tier** allows about 20 requests a day per model. RunNotes falls back to a lighter model when one runs out, but heavy use needs a key with billing.
+- **Supabase free projects pause** after a week without activity.
+- **Predictions are matched to the next run** (or the same run, for "I expected this to…"). A prediction about a run further ahead isn't checked.
