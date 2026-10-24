@@ -3,6 +3,7 @@ import { regenerateInsights } from "@/lib/insights";
 import { z } from "zod";
 import { FixRequestSchema } from "@/lib/entry-schema";
 import { EntryError, fixEntry } from "@/lib/entry-writer";
+import { requireOwner } from "@/lib/owner";
 import { applyFix, DbError, getEntryRow } from "@/lib/supabase";
 import { fetchRuns } from "@/lib/wandb";
 
@@ -10,6 +11,9 @@ import { fetchRuns } from "@/lib/wandb";
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
+  const denied = await requireOwner();
+  if (denied) return denied;
+
   const body = FixRequestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
     const message = z.flattenError(body.error).fieldErrors.correction?.[0] ?? "Send a runId and your correction.";

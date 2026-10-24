@@ -3,6 +3,7 @@ import { regenerateInsights } from "@/lib/insights";
 import { z } from "zod";
 import { EntryRequestSchema } from "@/lib/entry-schema";
 import { EntryError, writeEntry } from "@/lib/entry-writer";
+import { requireOwner } from "@/lib/owner";
 import { DbError, saveEntry } from "@/lib/supabase";
 import { fetchRuns, WandbError } from "@/lib/wandb";
 
@@ -10,6 +11,9 @@ import { fetchRuns, WandbError } from "@/lib/wandb";
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
+  const denied = await requireOwner();
+  if (denied) return denied;
+
   const body = EntryRequestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
     const message = z.flattenError(body.error).fieldErrors.notes?.[0] ?? "Send a runId and your notes.";

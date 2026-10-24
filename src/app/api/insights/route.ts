@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { EntryError } from "@/lib/entry-writer";
 import { getLatestInsights, regenerateInsights } from "@/lib/insights";
+import { requireOwner } from "@/lib/owner";
 import { DbError } from "@/lib/supabase";
 import { WandbError } from "@/lib/wandb";
 
@@ -27,6 +28,9 @@ export async function GET() {
 
 /** Rebuilds insights now. Body: { triggerRunId?: string }. */
 export async function POST(request: Request) {
+  const denied = await requireOwner();
+  if (denied) return denied;
+
   const body = (await request.json().catch(() => ({}))) as { triggerRunId?: unknown };
   const triggerRunId = typeof body.triggerRunId === "string" ? body.triggerRunId : undefined;
   try {
