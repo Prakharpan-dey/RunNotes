@@ -7,6 +7,10 @@ import type { SavedEntry } from "@/lib/entry-schema";
 import { getLatestInsights } from "@/lib/insights";
 import type { SavedInsights } from "@/lib/insights-schema";
 import { JournalView } from "@/components/journal-view";
+import { OwnerFooter } from "@/components/owner-footer";
+import { TryIt, type DemoRunSummary } from "@/components/try-it";
+import { DEMO_LIMIT, DEMO_WINDOW_SECONDS, demoRun } from "@/lib/demo";
+import { isOwner } from "@/lib/owner";
 
 const PROJECT_URL = `https://wandb.ai/${WANDB_ENTITY}/${WANDB_PROJECT}`;
 
@@ -32,13 +36,30 @@ async function LoadedSheet() {
   let notice: string | undefined;
   let insights: SavedInsights | null = null;
   let insightsError: string | null = null;
-  const [runsResult, entriesResult, insightsResult] = await Promise.allSettled([
+  let demo: DemoRunSummary | null = null;
+  const [runsResult, entriesResult, insightsResult, owner] = await Promise.allSettled([
     fetchRuns(),
     getEntries(),
     getLatestInsights(),
+    isOwner(),
   ]);
+  const canWrite = owner.status === "fulfilled" && owner.value;
   if (runsResult.status === "fulfilled") {
     rows = buildLedger(runsResult.value);
+    const picked = demoRun(runsResult.value);
+    const row = picked && rows.find((r) => r.id === picked.run.id);
+    if (picked && row) {
+      demo = {
+        id: row.id,
+        n: row.n,
+        name: row.name,
+        config: row.config,
+        rmse: row.rmse.value,
+        pearson: row.pearson.value,
+        prevRunNumber: row.n > 1 ? row.n - 1 : null,
+        url: row.url,
+      };
+    }
   } else {
     const err = runsResult.reason;
     if (!(err instanceof WandbError)) console.error(err);
@@ -59,14 +80,19 @@ async function LoadedSheet() {
     insightsError = err instanceof DbError ? err.message : "Couldn't load insights.";
   }
   return (
-    <Sheet
-      rows={rows}
-      entries={entries}
-      insights={insights}
-      insightsError={insightsError}
-      error={error}
-      notice={notice}
-    />
+    <>
+      {demo && <TryIt run={demo} limit={DEMO_LIMIT} windowHours={DEMO_WINDOW_SECONDS / 3600} />}
+      <Sheet
+        rows={rows}
+        entries={entries}
+        insights={insights}
+        insightsError={insightsError}
+        error={error}
+        notice={notice}
+        canWrite={canWrite}
+      />
+      <OwnerFooter isOwner={canWrite} />
+    </>
   );
 }
 
@@ -86,6 +112,7 @@ function Sheet({
   insightsError = null,
   error,
   notice,
+  canWrite = false,
 }: {
   rows: LedgerRow[] | null;
   entries?: Record<string, SavedEntry>;
@@ -93,6 +120,7 @@ function Sheet({
   insightsError?: string | null;
   error?: string;
   notice?: string;
+  canWrite?: boolean;
 }) {
   const logged = rows?.filter((r) => entries[r.id]).length ?? 0;
   const best = rows?.find((r) => r.isBest);
@@ -167,7 +195,13 @@ function Sheet({
               {notice}
             </p>
           )}
-          <JournalView rows={rows} entries={entries} insights={insights} insightsError={insightsError} />
+          <JournalView
+            rows={rows}
+            entries={entries}
+            insights={insights}
+            insightsError={insightsError}
+            canWrite={canWrite}
+          />
         </>
       )}
     </section>

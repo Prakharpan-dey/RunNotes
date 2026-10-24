@@ -17,7 +17,9 @@ export function JournalView({
   entries,
   insights: initialInsights,
   insightsError,
+  canWrite,
 }: {
+  canWrite: boolean;
   rows: LedgerRow[];
   entries: Record<string, SavedEntry>;
   insights: SavedInsights | null;
@@ -102,6 +104,7 @@ export function JournalView({
         loadError={insightsError}
         onRegenerate={regenerate}
         onGoToRun={goToRun}
+        canWrite={canWrite}
       />
       <RunsTable
         rows={rows}
@@ -109,6 +112,7 @@ export function JournalView({
         open={open}
         onOpenChange={setOpen}
         flashId={flashId}
+        canWrite={canWrite}
         onEntryChanged={(runId) => {
           setLoggedIds((prev) => (prev.has(runId) ? prev : new Set(prev).add(runId)));
           if (!insightsError) watchForRebuild(numberOf.get(runId) ?? null);

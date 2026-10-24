@@ -56,25 +56,39 @@ export function EntryCard({
   saved,
   previous,
   prevRunNumber,
+  demo = false,
 }: {
   saved: SavedEntry;
   previous: SavedEntry | null;
   prevRunNumber: number | null;
+  /** A "Try it yourself" entry: labelled as not saved. */
+  demo?: boolean;
 }) {
   const { entry } = saved;
   const old = previous?.entry ?? null;
   const notesChanged = !!previous && previous.raw_notes !== saved.raw_notes;
 
   return (
-    <article className="relative border border-graphite/40 bg-paper-raised py-5 pr-5 pl-7 shadow-[3px_3px_0_0_rgb(35_41_31/0.08)]">
+    <article
+      className={cn(
+        "relative border bg-paper-raised py-5 pr-5 pl-7 shadow-[3px_3px_0_0_rgb(35_41_31/0.08)]",
+        demo ? "border-dashed border-graphite/50" : "border-graphite/40",
+      )}
+    >
       {/* Margin rule down the left edge of a notebook page */}
       <span className="absolute inset-y-0 left-4 w-px bg-correction/50" aria-hidden />
 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="font-mono text-[11px] text-pencil">
-            Entry{prevRunNumber ? ` · compared with run ${prevRunNumber}` : " · first run"}
-          </p>
+          {demo ? (
+            <p className="w-fit rounded-sm border border-ochre px-1.5 py-px font-mono text-[11px] font-semibold tracking-wide text-ochre uppercase">
+              Demo entry · not saved
+            </p>
+          ) : (
+            <p className="font-mono text-[11px] text-pencil">
+              Entry{prevRunNumber ? ` · compared with run ${prevRunNumber}` : " · first run"}
+            </p>
+          )}
           <h3 className="mt-1 font-display text-3xl leading-[1.05] font-extrabold tracking-tight text-balance sm:text-4xl">
             <Marked on={!!old && old.title !== entry.title}>{entry.title}</Marked>
           </h3>
@@ -132,7 +146,9 @@ export function EntryCard({
 
       <footer className="mt-4 border-t border-dashed border-graphite/25 pt-3 text-[12px] text-pencil">
         <p>
-          Written {saved.created_label} IST from your spoken notes
+          {demo
+            ? "Written just now from your notes. Nothing was saved to the journal."
+            : `Written ${saved.created_label} IST from your spoken notes`}
           {saved.updated_label &&
             ` · fixed ${saved.fix_count === 1 ? "once" : `${saved.fix_count} times`}, last at ${saved.updated_label}`}
         </p>

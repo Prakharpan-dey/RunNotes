@@ -96,6 +96,7 @@ export function InsightsPanel({
   loadError,
   onRegenerate,
   onGoToRun,
+  canWrite,
 }: {
   saved: SavedInsights | null;
   status: InsightsStatus;
@@ -103,10 +104,12 @@ export function InsightsPanel({
   loadError: string | null;
   onRegenerate: () => void;
   onGoToRun: (n: number) => void;
+  /** Owner mode: show Regenerate. */
+  canWrite: boolean;
 }) {
   const updating = status.kind === "updating";
   const body = saved?.insights;
-  const stale = !!saved && !updating && saved.entry_count < entryCount;
+  const stale = canWrite && !!saved && !updating && saved.entry_count < entryCount;
 
   return (
     <section aria-labelledby="insights-heading" aria-busy={updating} className="border-b-2 border-graphite/80 px-4 py-5 sm:px-6">
@@ -125,7 +128,7 @@ export function InsightsPanel({
               updated after run {saved.after_run ?? "?"} · {saved.created_label}
             </span>
           ) : null}
-          {!updating && entryCount > 0 && !loadError && (
+          {canWrite && !updating && entryCount > 0 && !loadError && (
             <button
               type="button"
               onClick={onRegenerate}
@@ -143,9 +146,11 @@ export function InsightsPanel({
         <p className="mt-3 max-w-prose font-hand text-xl text-pencil">
           {updating
             ? "Reading your runs…"
-            : entryCount === 0
-              ? "Write your first entry and what you’re learning shows up here."
-              : "Your entries are ready. Build insights to see what they add up to."}
+            : !canWrite
+              ? "No insights yet."
+              : entryCount === 0
+                ? "Write your first entry and what you’re learning shows up here."
+                : "Your entries are ready. Build insights to see what they add up to."}
         </p>
       ) : (
         <div className={cn("transition-opacity", updating && "opacity-55")}>

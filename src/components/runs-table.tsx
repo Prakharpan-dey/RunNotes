@@ -117,8 +117,11 @@ export function RunsTable({
   onOpenChange: setOpen,
   flashId,
   onEntryChanged,
+  canWrite,
 }: {
   rows: LedgerRow[];
+  /** Owner mode: show the dictation and Fix it boxes. The server checks again on every write. */
+  canWrite: boolean;
   initialEntries: Record<string, SavedEntry>;
   /** Id of the expanded run. Lifted so insights can open a run. */
   open: string | null;
@@ -252,8 +255,10 @@ export function RunsTable({
                               : null
                           }
                         />
-                        <FixBox runId={row.id} onFixed={(saved) => onFixed(row.id, saved)} />
+                        {canWrite && <FixBox runId={row.id} onFixed={(saved) => onFixed(row.id, saved)} />}
                         </>
+                      ) : !canWrite ? (
+                        <p className="font-hand text-lg text-pencil">No entry for this run yet.</p>
                       ) : (
                         <EntryComposer
                           runId={row.id}
