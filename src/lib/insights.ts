@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "crypto";
 import { configChanges, EntryError, findLeakedNumber, generate, spokenNumbersToDigits } from "@/lib/entry-writer";
 import type { ConfigChange } from "@/lib/entry-schema";
+import { describeChange } from "@/lib/config-words";
 import { formatIst, num, PEARSON, RMSE } from "@/lib/ledger";
 import { db, DbError, getEntryRows, type EntryRow } from "@/lib/supabase";
 import { fetchRuns, WANDB_PROJECT, type Run } from "@/lib/wandb";
@@ -76,8 +77,9 @@ function metricOf(row: Row, metric: MetricKey): number | null {
   return num(row.run.summary[metric]);
 }
 
+/** A readable phrase for one config change, e.g. "added text features", "set alpha to 100". */
 function formatChange(c: ConfigChange): string {
-  return `${c.key}: ${JSON.stringify(c.from)} -> ${JSON.stringify(c.to)}`;
+  return describeChange(c);
 }
 
 function describeChanges(from: Run, to: Run): string[] {
@@ -328,15 +330,15 @@ Write:
 - headline: at most ${HEADLINE_MAX_WORDS} words, about the HEADLINE FACT only. Lead with the change, e.g. "Adding text features set a new best score."
 - sentences: exactly one plain-English sentence for every fact id given, and no other ids. Keep each fact's meaning:
   - lever: this change set a new best score compared with the previous best run. Name the setting that changed.
-  - no_effect: main_change made no real difference compared with the best run so far. Name main_change as the thing that didn't matter; mention changed_alongside only as what came with it ("with alpha raised to 100"), never as the cause.
-  - regression: this change made the score much worse than the best run so far. If recovered_by is given, add that the next run recovered and what it changed, e.g. "Run 5 got much worse after adding embeddings; run 6 recovered with stronger regularisation." Use the person's own explanation from the run titles if there is one, attributed ("I think it overfit").
+  - no_effect: main_change made no real difference compared with the best run so far. Name main_change as the thing that didn't matter; mention changed_alongside only as what came with it, never as the cause, e.g. "Adding sentence embeddings, along with setting alpha to 100, made no real difference compared with the best run so far."
+  - regression: this change made the score much worse than the best run so far. If recovered_by is given, add that the next run recovered and what it changed, e.g. "Run 5 got much worse after adding sentence embeddings; run 6 recovered by setting alpha to 100." Use the person's own explanation from the run titles if there is one, attributed ("I think it overfit").
   - prediction_check: what I predicted, before which change, and that the result missed it. First person, natural, e.g. "I expected Pearson above 0.6 from adding text features, but it came in below that." For "beat run N", say I expected it to beat run N and it didn't.
 - next_experiment: the one experiment most worth running next, and why, from the facts and the person's own next steps.
 
 Rules:
 - No metric values, score differences or percentages, except the predicted value inside a prediction_check sentence.
 - Don't add claims beyond the facts. Explanations from the notes are the person's guesses: attribute them ("I suspect...").
-- Plain English. Name settings the way the person does ("text features", "LightGBM", "embeddings", "alpha").`;
+- Plain English. Changes are already written as "-ing" phrases ("adding text features", "switching from Ridge to LightGBM", "setting alpha to 100"). Use them after "by", "from" or "after", or as the subject ("Adding sentence embeddings made no real difference"). Start every sentence with a capital letter. Keep model names capitalised as given.`;
 
 function runLabel(rows: Row[], n: number): string {
   const row = rows[n - 1];
@@ -397,23 +399,27 @@ function factForModel(rows: Row[], f: Fact) {
   };
 }
 
-/** `features: "acoustic" -> "acoustic+text"` reads as `features acoustic -> acoustic+text`. */
+/** ["adding text features", "setting alpha to 100"] -> "adding text features and setting alpha to 100". */
 function plain(changes: string[]): string {
-  return changes.map((c) => c.replace(/"/g, "").replace(": ", " ")).join(", ");
+  if (changes.length === 0) return "the same config";
+  if (changes.length === 1) return changes[0];
+  return `${changes.slice(0, -1).join(", ")} and ${changes[changes.length - 1]}`;
 }
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Plain sentence from the fact alone, used when the model leaves one out. */
 function templateSentence(rows: Row[], f: Fact): string {
   if (f.type === "lever") {
-    return `Run ${f.run} set a new best over run ${f.prevBest}${f.changes.length ? ` by changing ${plain(f.changes)}` : ""}.`;
+    return `Run ${f.run} set a new best over run ${f.prevBest} by ${plain(f.changes)}.`;
   }
   if (f.type === "no_effect") {
-    const alongside = f.alongside.length ? ` (with ${plain(f.alongside)})` : "";
-    return `Changing ${plain(f.main)}${alongside} made no real difference compared with the best so far, run ${f.best}.`;
+    const alongside = f.alongside.length ? `, along with ${plain(f.alongside)},` : "";
+    return `${capitalise(plain(f.main))}${alongside} made no real difference compared with run ${f.best}, the best so far.`;
   }
   if (f.type === "regression") {
-    const recovered = f.recovery ? `; run ${f.recovery.run} recovered after changing ${plain(f.recovery.changes)}` : "";
-    return `Run ${f.run} got much worse than the best so far (run ${f.best}) after changing ${plain(f.changes)}${recovered}.`;
+    const recovered = f.recovery ? `; run ${f.recovery.run} recovered by ${plain(f.recovery.changes)}` : "";
+    return `Run ${f.run} got much worse than run ${f.best}, the best so far, after ${plain(f.changes)}${recovered}.`;
   }
   const r = f.result;
   const outcome = r.comparison === "beat_run" ? "it didn't" : `run ${r.tested_run} came in ${r.actual > r.predicted ? "above" : "below"} it`;

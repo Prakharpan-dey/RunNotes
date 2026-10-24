@@ -1,6 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
+
+/** Prediction checks shown before "Show more". */
+const VISIBLE_PREDICTIONS = 2;
 import type { Comparison, InsightType, MetricKey, PredictionResult, RunFact, SavedInsights } from "@/lib/insights-schema";
 
 const TYPE_LABEL: Record<InsightType, string> = {
@@ -124,6 +128,15 @@ export function InsightsPanel({
   const body = saved?.insights;
   const stale = canWrite && !!saved && !updating && saved.entry_count < entryCount;
 
+  // Keep the panel to about one screen: every lever, regression and no-effect, but only the
+  // newest prediction checks (they arrive newest first). The rest sit behind "Show more".
+  const [showAll, setShowAll] = useState(false);
+  const all = body?.insights ?? [];
+  let predictionsShown = 0;
+  const collapsed = all.filter((x) => x.type !== "prediction_check" || predictionsShown++ < VISIBLE_PREDICTIONS);
+  const hiddenCount = all.length - collapsed.length;
+  const visible = showAll ? all : collapsed;
+
   return (
     <section aria-labelledby="insights-heading" aria-busy={updating} className="border-b-2 border-graphite/80 px-4 py-5 sm:px-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
@@ -178,9 +191,12 @@ export function InsightsPanel({
             </p>
           )}
 
-          {body.insights.length > 0 && (
-            <ul className="mt-5 divide-y divide-dashed divide-graphite/25 border-y border-dashed border-graphite/25">
-              {body.insights.map((x, i) => {
+          {visible.length > 0 && (
+            <ul
+              id="insights-list"
+              className="mt-5 divide-y divide-dashed divide-graphite/25 border-y border-dashed border-graphite/25"
+            >
+              {visible.map((x, i) => {
                 const actual = x.facts.at(-1);
                 // Older saved insights have no metric field; they were all val_rmse.
                 const metric: MetricKey = x.metric ?? x.comparison?.metric ?? "val_rmse";
@@ -231,6 +247,20 @@ export function InsightsPanel({
                 );
               })}
             </ul>
+          )}
+
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              aria-expanded={showAll}
+              aria-controls="insights-list"
+              className="mt-2 rounded-sm text-[13px] text-ballpoint underline underline-offset-4"
+            >
+              {showAll
+                ? "Show fewer"
+                : `Show ${hiddenCount} more prediction ${hiddenCount === 1 ? "check" : "checks"}`}
+            </button>
           )}
 
           <div className="mt-4 grid gap-x-4 gap-y-1 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
