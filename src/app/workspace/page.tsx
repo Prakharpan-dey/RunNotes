@@ -82,7 +82,7 @@ export default function WorkspacePage() {
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12">
-      <PageHeader />
+      <PageHeader as={current?.kind === "ready" ? "h1" : "p"} />
       <ModeTabs active="workspace" />
 
       {(connection === undefined || (connection && !current)) && (
@@ -90,19 +90,25 @@ export default function WorkspacePage() {
       )}
 
       {connection === null && (
-        <section className="max-w-3xl border-2 border-graphite/80 bg-paper/85 px-4 py-6 shadow-[4px_4px_0_0_rgb(35_41_31/0.12)] sm:px-6">
-          <h1 className="font-display text-4xl leading-none font-extrabold tracking-tight">Use RunNotes on your own runs</h1>
-          <p className="mt-3 max-w-prose text-[15px] leading-snug">
-            Connect a Weights &amp; Biases project and you get the full journal: dictate an entry after each run, fix it by
-            voice, and see which changes actually moved your score. It&apos;s your own workspace, separate from my journal.
-          </p>
-          <Link
-            href="/connect"
-            className="mt-5 inline-flex h-9 items-center rounded-sm bg-primary px-4 text-sm font-medium text-primary-foreground"
-          >
-            Connect your W&amp;B project
-          </Link>
-          <p className="mt-3 text-[12px] text-pencil">You&apos;ll need a W&amp;B API key. A Gemini key is optional.</p>
+        <section className="grid items-center gap-10 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <div>
+            <h1 className="max-w-md font-display text-5xl leading-[0.95] font-extrabold tracking-tight text-balance">
+              Use RunNotes on your own runs
+            </h1>
+            <p className="mt-4 max-w-prose text-body leading-snug">
+              Connect a Weights &amp; Biases project and you get the full journal: dictate an entry after each run, fix it
+              by voice, and see which changes actually moved your score. It&apos;s your own workspace, separate from my
+              journal.
+            </p>
+            <Link
+              href="/connect"
+              className="mt-6 inline-flex h-11 items-center rounded-sm bg-primary px-4 text-sm font-medium text-primary-foreground sm:h-10"
+            >
+              Connect your W&amp;B project
+            </Link>
+            <p className="mt-3 text-meta text-pencil">You&apos;ll need a W&amp;B API key. A Gemini key is optional.</p>
+          </div>
+          <SamplePage />
         </section>
       )}
 
@@ -112,11 +118,11 @@ export default function WorkspacePage() {
           <p role="alert" className="mt-1 max-w-prose text-sm">
             {current.message}
           </p>
-          <p className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[13px]">
-            <Link href="/connect" className="text-ballpoint underline underline-offset-4">
+          <p className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-note">
+            <Link href="/connect" className="tap text-ballpoint underline underline-offset-4">
               Check your connection
             </Link>
-            <button type="button" onClick={leave} className="text-pencil underline underline-offset-4">
+            <button type="button" onClick={leave} className="tap text-pencil underline underline-offset-4">
               Disconnect
             </button>
           </p>
@@ -125,10 +131,10 @@ export default function WorkspacePage() {
 
       {current?.kind === "ready" && (
         <>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-[13px]">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-note">
             <p className="min-w-0">
-              <span className="font-display text-sm font-bold tracking-wide uppercase">Your project</span>{" "}
-              <span className="font-mono text-[12px] text-pencil">
+              <span className="font-display text-base font-bold">Your project</span>{" "}
+              <span className="font-mono text-meta text-pencil">
                 · {current.journal.entity}/{current.journal.project}
               </span>
             </p>
@@ -139,16 +145,16 @@ export default function WorkspacePage() {
                 ) : (
                   <>
                     Free tier: {current.journal.aiLimit} AI calls a day ·{" "}
-                    <Link href="/connect" className="text-ballpoint underline underline-offset-4">
+                    <Link href="/connect" className="tap text-ballpoint underline underline-offset-4">
                       add a key
                     </Link>
                   </>
                 )}
               </span>
-              <Link href="/connect" className="text-ballpoint underline underline-offset-4">
+              <Link href="/connect" className="tap text-ballpoint underline underline-offset-4">
                 Change settings
               </Link>
-              <button type="button" onClick={leave} className="rounded-sm border border-graphite/50 px-2.5 py-1">
+              <button type="button" onClick={leave} className="min-h-11 rounded-sm border border-graphite/50 px-3 sm:min-h-8">
                 Disconnect
               </button>
             </p>
@@ -164,14 +170,52 @@ export default function WorkspacePage() {
               insightsError={current.journal.insightsError}
               notice={current.journal.notice ?? undefined}
               canWrite
+              wandbLinks
             />
           </ApiProvider>
-          <p className="mt-6 text-[12px] text-pencil">
+          <p className="mt-6 text-meta text-pencil">
             Your workspace is tied to this browser. Anyone with its ID and your W&amp;B key could open it, so don&apos;t share
             either.
           </p>
         </>
       )}
     </main>
+  );
+}
+
+/** A blank pad page with one run already written up: what a connected journal looks like. */
+function SamplePage() {
+  const rows = [
+    { n: 3, name: "baseline-ridge", value: "0.812", delta: null },
+    { n: 4, name: "add-text-features", value: "0.701", delta: "−0.111" },
+    { n: 5, name: "bigger-batch", value: "0.705", delta: "+0.004" },
+  ];
+  return (
+    <figure aria-hidden className="relative rotate-1 border-2 border-graphite/50 bg-paper-raised/80 px-5 py-4 shadow-sheet select-none">
+      <div className="flex items-baseline justify-between border-b-2 border-graphite/40 pb-2">
+        <p className="font-display text-2xl font-extrabold tracking-tight">your-project</p>
+        <p className="font-mono text-meta text-pencil">3 runs</p>
+      </div>
+      <ul className="divide-y divide-grid-major/80 font-mono text-meta">
+        {rows.map((r) => (
+          <li key={r.n} className="flex items-baseline gap-3 py-2">
+            <span className="w-4 text-pencil">{r.n}</span>
+            <span className="min-w-0 flex-1 truncate">{r.name}</span>
+            <span className="tabular-nums">{r.value}</span>
+            <span className={`w-14 text-right tabular-nums ${r.delta?.startsWith("−") ? "text-ballpoint" : "text-correction"}`}>
+              {r.delta ?? ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="relative mt-3 border border-graphite/30 bg-paper py-3 pr-3 pl-6">
+        <span className="absolute inset-y-0 left-3 w-px bg-correction/50" />
+        <p className="font-display text-lg leading-tight font-extrabold">Adding text features set a new best</p>
+        <p className="mt-1 font-hand text-base leading-snug text-pencil">
+          “Swapped in the transcript features, rmse dropped a lot. Try a bigger model next.”
+        </p>
+      </div>
+      <figcaption className="absolute -bottom-7 left-2 font-hand text-base text-pencil">← this, for every run you log</figcaption>
+    </figure>
   );
 }

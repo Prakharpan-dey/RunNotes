@@ -22,37 +22,47 @@ type Found = { runCount: number; metricKeys: string[]; ownGeminiKey: boolean };
 type Choice = { key: string; higherIsBetter: boolean };
 
 const inputClass =
-  "mt-1 h-9 w-full rounded-sm border border-graphite/40 bg-paper-raised px-3 font-mono text-[13px] text-graphite focus-visible:border-ballpoint";
+  "mt-1 h-11 w-full rounded-sm border border-graphite/40 bg-paper-raised px-3 font-mono text-note text-graphite focus-visible:border-ballpoint sm:h-9";
 
 function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: (id: string) => React.ReactNode }) {
   const id = useId();
   return (
     <div className="min-w-0">
-      <label htmlFor={id} className="text-[13px] font-medium">
+      <label htmlFor={id} className="text-note font-medium">
         {label}
       </label>
       {children(id)}
-      {hint && <p className="mt-1 text-[12px] text-pencil">{hint}</p>}
+      {hint && <p className="mt-1 max-w-prose text-meta text-pencil">{hint}</p>}
     </div>
   );
 }
 
+/** Lower / higher is better, as real radio buttons: one Tab stop, arrow keys switch. */
 function Direction({ value, onChange, name }: { value: boolean; onChange: (higher: boolean) => void; name: string }) {
+  const group = useId();
   return (
-    <div role="radiogroup" aria-label={`${name} direction`} className="mt-1 inline-flex rounded-sm border border-graphite/40 p-0.5">
+    <fieldset className="mt-1 inline-flex rounded-sm border border-graphite/40 p-0.5">
+      <legend className="sr-only">{name}: which way is better</legend>
       {[false, true].map((higher) => (
-        <button
-          key={String(higher)}
-          type="button"
-          role="radio"
-          aria-checked={value === higher}
-          onClick={() => onChange(higher)}
-          className={cn("rounded-sm px-2.5 py-1 text-[12px]", value === higher ? "bg-graphite text-paper" : "text-pencil")}
-        >
-          {higher ? "Higher is better" : "Lower is better"}
-        </button>
+        <label key={String(higher)} className="cursor-pointer">
+          <input
+            type="radio"
+            name={group}
+            checked={value === higher}
+            onChange={() => onChange(higher)}
+            className="peer sr-only"
+          />
+          <span
+            className={cn(
+              "inline-flex min-h-11 items-center rounded-sm px-2.5 text-meta peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ballpoint sm:min-h-8",
+              value === higher ? "bg-graphite text-paper" : "text-pencil",
+            )}
+          >
+            {higher ? "Higher is better" : "Lower is better"}
+          </span>
+        </label>
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -132,11 +142,16 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
       <PageHeader />
       <ModeTabs active="workspace" />
 
-      <section className="max-w-3xl border-2 border-graphite/80 bg-paper/85 px-4 py-6 shadow-[4px_4px_0_0_rgb(35_41_31/0.12)] sm:px-6">
+      <section className="max-w-3xl border-2 border-graphite/80 bg-paper/85 px-4 py-6 shadow-sheet sm:px-6">
         <h1 className="font-display text-4xl leading-none font-extrabold tracking-tight">Connect your W&B project</h1>
-        <p className="mt-2 max-w-prose text-[15px] leading-snug">
+        <p className="mt-2 max-w-prose text-body leading-snug">
           Use RunNotes on your own runs: talk after each one, fix entries by voice, and see what your runs add up to. Your
           journal is separate from mine.
+        </p>
+
+        <p className="mt-3 max-w-prose border-l border-graphite/40 pl-3 text-note text-pencil">
+          Your keys stay in this browser tab and are sent only with your own requests. RunNotes never stores them. Closing
+          the tab forgets them; your journal stays and comes back when you reconnect.
         </p>
 
         <form onSubmit={check} className="mt-6 grid gap-4">
@@ -145,7 +160,7 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
             hint={
               <>
                 From{" "}
-                <a href="https://wandb.ai/authorize" target="_blank" rel="noreferrer" className="text-ballpoint underline underline-offset-4">
+                <a href="https://wandb.ai/authorize" target="_blank" rel="noreferrer" className="tap rounded-sm text-ballpoint underline underline-offset-4">
                   wandb.ai/authorize
                 </a>
                 .
@@ -181,7 +196,7 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
             hint={
               <>
                 Without it you get {WORKSPACE_AI_LIMIT} free AI calls a day (about 2 entries). Get one at{" "}
-                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-ballpoint underline underline-offset-4">
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="tap rounded-sm text-ballpoint underline underline-offset-4">
                   aistudio.google.com/apikey
                 </a>
                 .
@@ -201,25 +216,20 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
             )}
           </Field>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Button type="submit" disabled={!ready || pending !== null} className="h-9 rounded-sm px-4">
+            <Button type="submit" disabled={!ready || pending !== null} className="h-11 rounded-sm px-4 sm:h-9">
               {pending === "check" ? "Checking…" : "Check connection"}
             </Button>
-            <Link href="/" className="text-[13px] text-pencil underline underline-offset-4">
+            <Link href="/" className="tap text-note text-pencil underline underline-offset-4">
               Back to my journal
             </Link>
           </div>
         </form>
 
-        <p className="mt-4 max-w-prose text-[12px] text-pencil">
-          Your keys stay in this browser tab and are sent only with your own requests. RunNotes never stores them. Closing
-          the tab forgets them; your journal stays and comes back when you reconnect.
-        </p>
-
         {found && primary && (
           <div className="mt-6 border-t border-dashed border-graphite/30 pt-5">
-            <p className="text-[15px]">
+            <p className="text-body">
               Found <strong>{found.runCount}</strong> {found.runCount === 1 ? "run" : "runs"} in{" "}
-              <span className="font-mono text-[13px]">
+              <span className="font-mono text-note">
                 {entity.trim()}/{project.trim()}
               </span>
               {found.ownGeminiKey ? ", and your Gemini key works." : "."}
@@ -271,7 +281,7 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
                 )}
               </Field>
             </div>
-            <Button type="button" onClick={connect} disabled={pending !== null} className="mt-5 h-9 rounded-sm px-4">
+            <Button type="button" onClick={connect} disabled={pending !== null} className="mt-5 h-11 rounded-sm px-4 sm:h-9">
               {pending === "connect" ? "Connecting…" : "Connect"}
             </Button>
           </div>

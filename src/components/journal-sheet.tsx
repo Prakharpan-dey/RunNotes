@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ArrowUpRight } from "lucide-react";
 import type { LedgerRow } from "@/lib/ledger";
 import type { SavedEntry } from "@/lib/entry-schema";
 import type { SavedInsights } from "@/lib/insights-schema";
@@ -29,6 +30,7 @@ export function JournalSheet({
   error,
   notice,
   canWrite = false,
+  wandbLinks = false,
 }: {
   entity: string;
   project: string;
@@ -40,25 +42,27 @@ export function JournalSheet({
   error?: string;
   notice?: string;
   canWrite?: boolean;
+  /** Link out to W&B. Off for the owner's journal: that project is private, so visitors would hit a sign-in wall. */
+  wandbLinks?: boolean;
 }) {
   const logged = rows?.filter((r) => entries[r.id]).length ?? 0;
   const best = rows?.find((r) => r.isBest);
   const latest = rows?.[0];
-  const pending = <span className="font-mono text-sm text-pencil/60">…</span>;
+  const pending = <span className="font-mono text-sm text-pencil">…</span>;
   const projectUrl = `https://wandb.ai/${encodeURIComponent(entity)}/${encodeURIComponent(project)}`;
 
   return (
-    <section className="border-2 border-graphite/80 bg-paper/85 shadow-[4px_4px_0_0_rgb(35_41_31/0.12)]">
+    <section className="border-2 border-graphite/80 bg-paper/85 shadow-sheet">
       {/* Title block, as in the corner of an engineering drawing */}
       <div className="grid grid-cols-3 border-b-2 border-graphite/80 md:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))]">
         <Field label="Project" className="col-span-3 border-b md:col-span-1 md:border-r md:border-b-0">
-          <h1 className="truncate font-display text-5xl leading-[0.9] font-extrabold tracking-tight sm:text-6xl">{project}</h1>
+          <h2 className="truncate font-display text-3xl leading-[0.95] font-extrabold tracking-tight sm:text-4xl">{project}</h2>
         </Field>
         <Field label="Runs" className="border-r">
           {rows ? (
             <p className="font-mono text-lg tabular-nums">
               {rows.length}
-              <span className="block text-[11px] text-pencil">{logged} with entries</span>
+              <span className="block text-meta text-pencil">{logged} with entries</span>
             </p>
           ) : (
             pending
@@ -69,12 +73,12 @@ export function JournalSheet({
             best ? (
               <p className="font-mono text-lg tabular-nums">
                 {best.primary.value!.toFixed(3)}{" "}
-                <span className="block text-[11px] text-pencil">
+                <span className="block text-meta text-pencil">
                   {metrics.primary.key} · run {best.n}
                 </span>
               </p>
             ) : (
-              <p className="font-mono text-lg text-pencil/60">—</p>
+              <p className="font-mono text-lg text-pencil">—</p>
             )
           ) : (
             pending
@@ -82,11 +86,14 @@ export function JournalSheet({
         </Field>
         <Field label="Last run">{rows ? <p className="text-sm">{latest ? latest.started : "—"}</p> : pending}</Field>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-graphite/40 px-4 py-2 text-[12px] text-pencil">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-graphite/40 px-4 py-2 text-meta text-pencil">
         <p className="min-w-0 truncate font-mono">{entity}</p>
-        <a href={projectUrl} target="_blank" rel="noreferrer" className="rounded-sm text-ballpoint underline underline-offset-4">
-          Open project in W&B ↗
-        </a>
+        {wandbLinks && (
+          <a href={projectUrl} target="_blank" rel="noreferrer" className="tap rounded-sm text-ballpoint underline underline-offset-4">
+            Open project in W&B
+            <ArrowUpRight className="ml-0.5 inline size-3.5 align-[-2px]" aria-hidden />
+          </a>
+        )}
       </div>
 
       {rows === null ? (
@@ -100,14 +107,14 @@ export function JournalSheet({
         <div className="px-4 py-10">
           <p className="font-hand text-xl text-ballpoint">No runs on this sheet yet.</p>
           <p className="mt-1 max-w-prose text-sm text-pencil">
-            Log one with <code className="font-mono text-[12px]">wandb.init(project=&quot;{project}&quot;)</code>, then reload
+            Log one with <code className="font-mono text-meta">wandb.init(project=&quot;{project}&quot;)</code>, then reload
             this page.
           </p>
         </div>
       ) : (
         <>
           {notice && (
-            <p role="status" className="border-b border-graphite/40 bg-ochre/10 px-4 py-2 text-[13px] text-ochre">
+            <p role="status" className="border-b border-graphite/40 bg-ochre/10 px-4 py-2 text-note text-ochre">
               {notice}
             </p>
           )}
@@ -117,6 +124,7 @@ export function JournalSheet({
             insights={insights}
             insightsError={insightsError}
             canWrite={canWrite}
+            wandbLinks={wandbLinks}
             metrics={metrics}
           />
         </>
