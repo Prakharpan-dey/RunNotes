@@ -93,6 +93,8 @@ All of them are server-only; none are exposed to the browser.
 | Name | Required | Purpose |
 |---|---|---|
 | `WANDB` | Yes | W&B API key for the owner journal |
+| `WANDB_ENTITY` | Yes | The owner journal's W&B entity (user or team), as in `wandb.ai/<entity>/<project>` |
+| `WANDB_PROJECT` | Yes | The owner journal's W&B project |
 | `SUPABASE_URL` | Yes | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Server access to Supabase |
 | `GEMINI_API_KEY` | Yes | Used by the owner journal, the demo and workspaces without their own key |
@@ -113,7 +115,7 @@ In the Supabase SQL editor, run the files in `supabase/` in order:
 
 | Setting | Where |
 |---|---|
-| Owner journal's W&B entity and project | `WANDB_ENTITY`, `WANDB_PROJECT` in `src/lib/wandb.ts` |
+| Owner journal's W&B entity and project | `WANDB_ENTITY`, `WANDB_PROJECT` environment variables |
 | Owner journal's metrics and directions | `OWNER_METRICS` in `src/lib/metrics.ts` |
 | Insight thresholds (noise, regression, "around") | `NOISE_REL`, `REGRESSION_REL`, `AROUND_REL` in `src/lib/metrics.ts` |
 | Free AI calls per workspace per day | `WORKSPACE_AI_LIMIT` in `src/lib/limits.ts` |

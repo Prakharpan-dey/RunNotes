@@ -1,8 +1,9 @@
 import "server-only";
 import { cacheLife } from "next/cache";
 
-export const WANDB_ENTITY = "prvkhvr-national-institute-of-technology-hamirpur";
-export const WANDB_PROJECT = "shl-grammar";
+/** The owner journal's W&B entity and project, from the environment so the account name isn't in the code. */
+export const WANDB_ENTITY = process.env.WANDB_ENTITY ?? "";
+export const WANDB_PROJECT = process.env.WANDB_PROJECT ?? "";
 
 const GRAPHQL_URL = "https://api.wandb.ai/graphql";
 const PAGE_SIZE = 100;
@@ -118,6 +119,12 @@ export function ownerSource(): WandbSource {
   if (!key) {
     throw new WandbError(
       "No W&B API key found. Add WANDB=<your key> to .env.local and restart the dev server.",
+      500,
+    );
+  }
+  if (!WANDB_ENTITY || !WANDB_PROJECT) {
+    throw new WandbError(
+      "No W&B project set for the journal. Add WANDB_ENTITY and WANDB_PROJECT to .env.local and restart the dev server.",
       500,
     );
   }

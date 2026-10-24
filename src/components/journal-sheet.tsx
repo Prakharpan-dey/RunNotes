@@ -57,17 +57,18 @@ export function JournalSheet({
       <div className="grid grid-cols-3 border-b-2 border-graphite/80 md:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))]">
         <Field label="Project" className="col-span-3 border-b md:col-span-1 md:border-r md:border-b-0">
           <h2 className="truncate font-display text-3xl leading-[0.95] font-extrabold tracking-tight">{project}</h2>
-          <p className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1 text-meta text-pencil">
-            <span className="min-w-0 truncate font-mono" title={entity}>
-              {entity}
-            </span>
-            {wandbLinks && (
+          {/* The W&B account name is shown with the links: in your own workspace, not on the public journal. */}
+          {wandbLinks && (
+            <p className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1 text-meta text-pencil">
+              <span className="min-w-0 truncate font-mono" title={entity}>
+                {entity}
+              </span>
               <a href={projectUrl} target="_blank" rel="noreferrer" className="tap shrink-0 rounded-sm text-ballpoint underline underline-offset-4">
                 Open in W&B
                 <ArrowUpRight className="ml-0.5 inline size-3.5 align-[-2px]" aria-hidden />
               </a>
-            )}
-          </p>
+            </p>
+          )}
         </Field>
         <Field label="Runs" className="border-r">
           {rows ? (

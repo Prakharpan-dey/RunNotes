@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { buildLedger, type LedgerRow } from "@/lib/ledger";
-import { fetchOwnerRunsCached, WANDB_ENTITY, WANDB_PROJECT, WandbError } from "@/lib/wandb";
+import { fetchOwnerRunsCached, WANDB_PROJECT, WandbError } from "@/lib/wandb";
 import { DbError, getEntries, OWNER_WORKSPACE } from "@/lib/supabase";
 import type { SavedEntry } from "@/lib/entry-schema";
 import { getLatestInsights } from "@/lib/insights";
@@ -19,7 +19,7 @@ export default function Home() {
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12 wide:max-w-[100rem]">
       <PageHeader as="h1" />
       <ModeTabs active="journal" />
-      <Suspense fallback={<JournalSheet entity={WANDB_ENTITY} project={WANDB_PROJECT} metrics={OWNER_METRICS} rows={null} />}>
+      <Suspense fallback={<JournalSheet entity="" project={WANDB_PROJECT} metrics={OWNER_METRICS} rows={null} />}>
         <LoadedSheet />
       </Suspense>
     </main>
@@ -43,7 +43,8 @@ async function LoadedSheet() {
   ]);
   const canWrite = owner.status === "fulfilled" && owner.value;
   if (runsResult.status === "fulfilled") {
-    rows = buildLedger(runsResult.value, OWNER_METRICS);
+    // Run URLs carry the W&B account name; the public journal doesn't link to W&B, so don't send them.
+    rows = buildLedger(runsResult.value, OWNER_METRICS).map((r) => ({ ...r, url: "" }));
     const picked = demoRun(runsResult.value);
     const row = picked && rows.find((r) => r.id === picked.run.id);
     if (picked && row) {
@@ -80,7 +81,7 @@ async function LoadedSheet() {
     <>
       {demo && <TryIt run={demo} limit={DEMO_LIMIT} windowHours={DEMO_WINDOW_SECONDS / 3600} />}
       <JournalSheet
-        entity={WANDB_ENTITY}
+        entity=""
         project={WANDB_PROJECT}
         metrics={OWNER_METRICS}
         rows={rows}
