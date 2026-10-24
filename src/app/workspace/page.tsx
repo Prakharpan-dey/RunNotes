@@ -81,7 +81,7 @@ export default function WorkspacePage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12">
+    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12 wide:max-w-[100rem]">
       <PageHeader as={current?.kind === "ready" ? "h1" : "p"} />
       <ModeTabs active="workspace" />
 

@@ -52,11 +52,22 @@ export function JournalSheet({
   const projectUrl = `https://wandb.ai/${encodeURIComponent(entity)}/${encodeURIComponent(project)}`;
 
   return (
-    <section className="border-2 border-graphite/80 bg-paper/85 shadow-sheet">
+    <section className="pad border-2 border-graphite/80 shadow-sheet">
       {/* Title block, as in the corner of an engineering drawing */}
       <div className="grid grid-cols-3 border-b-2 border-graphite/80 md:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))]">
         <Field label="Project" className="col-span-3 border-b md:col-span-1 md:border-r md:border-b-0">
-          <h2 className="truncate font-display text-3xl leading-[0.95] font-extrabold tracking-tight sm:text-4xl">{project}</h2>
+          <h2 className="truncate font-display text-3xl leading-[0.95] font-extrabold tracking-tight">{project}</h2>
+          <p className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1 text-meta text-pencil">
+            <span className="min-w-0 truncate font-mono" title={entity}>
+              {entity}
+            </span>
+            {wandbLinks && (
+              <a href={projectUrl} target="_blank" rel="noreferrer" className="tap shrink-0 rounded-sm text-ballpoint underline underline-offset-4">
+                Open in W&B
+                <ArrowUpRight className="ml-0.5 inline size-3.5 align-[-2px]" aria-hidden />
+              </a>
+            )}
+          </p>
         </Field>
         <Field label="Runs" className="border-r">
           {rows ? (
@@ -85,15 +96,6 @@ export function JournalSheet({
           )}
         </Field>
         <Field label="Last run">{rows ? <p className="text-sm">{latest ? latest.started : "—"}</p> : pending}</Field>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-graphite/40 px-4 py-2 text-meta text-pencil">
-        <p className="min-w-0 truncate font-mono">{entity}</p>
-        {wandbLinks && (
-          <a href={projectUrl} target="_blank" rel="noreferrer" className="tap rounded-sm text-ballpoint underline underline-offset-4">
-            Open project in W&B
-            <ArrowUpRight className="ml-0.5 inline size-3.5 align-[-2px]" aria-hidden />
-          </a>
-        )}
       </div>
 
       {rows === null ? (

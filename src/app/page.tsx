@@ -16,7 +16,7 @@ import { isOwner } from "@/lib/owner";
 
 export default function Home() {
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12">
+    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12 wide:max-w-[100rem]">
       <PageHeader as="h1" />
       <ModeTabs active="journal" />
       <Suspense fallback={<JournalSheet entity={WANDB_ENTITY} project={WANDB_PROJECT} metrics={OWNER_METRICS} rows={null} />}>

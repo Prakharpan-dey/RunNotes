@@ -103,7 +103,7 @@ export function JournalView({
   }
 
   return (
-    <>
+    <div className="wide:grid wide:grid-cols-[minmax(0,27rem)_minmax(0,1fr)]">
       <InsightsPanel
         saved={insights}
         status={status}
@@ -115,6 +115,12 @@ export function JournalView({
         canWrite={canWrite}
         metrics={metrics}
       />
+      <div className="min-w-0">
+      {/* The table's own heading, so the runs column reads as a section, not a loose grid. */}
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 pt-5 pb-3 sm:px-6">
+        <h3 className="font-display text-2xl leading-none font-extrabold tracking-tight">Runs</h3>
+        <p className="text-note text-pencil">Newest first. Open a run to read its entry.</p>
+      </div>
       <RunsTable
         rows={rows}
         initialEntries={entries}
@@ -129,6 +135,7 @@ export function JournalView({
           if (!insightsError) watchForRebuild(numberOf.get(runId) ?? null);
         }}
       />
-    </>
+      </div>
+    </div>
   );
 }

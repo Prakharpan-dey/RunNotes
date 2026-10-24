@@ -201,36 +201,21 @@ export function InsightsPanel({
 
   return (
     <RunHref.Provider value={runHref}>
-    <section aria-labelledby="insights-heading" aria-busy={updating} className="border-b-2 border-graphite/80 px-4 py-5 sm:px-6">
+    <section aria-labelledby="insights-heading" aria-busy={updating} className="border-b-2 border-graphite/80 px-4 py-5 sm:px-6 wide:border-r-2 wide:border-b-0">
       {/* The headline is the section's heading; with no headline yet, the heading is for screen readers only. */}
       {!body && (
         <h3 id="insights-heading" className="sr-only">
           What the runs say
         </h3>
       )}
-      <div className="flex flex-wrap items-baseline justify-end gap-x-6 gap-y-1">
-        <p className="flex items-center gap-3 font-mono text-meta text-pencil" aria-live="polite">
-          {updating ? (
-            <span className="inline-flex items-center gap-1.5 text-ballpoint">
-              <span className="size-1.5 rounded-full bg-ballpoint motion-safe:animate-pulse" aria-hidden />
-              Updating{status.afterRun ? ` after run ${status.afterRun}` : ""}…
-            </span>
-          ) : saved ? (
-            <span>
-              numbers from W&B · updated after run {saved.after_run ?? "?"} · {saved.created_label}
-            </span>
-          ) : null}
-          {canWrite && !updating && entryCount > 0 && !loadError && (
-            <button
-              type="button"
-              onClick={onRegenerate}
-              className="tap rounded-sm font-sans text-meta text-ballpoint underline underline-offset-4"
-            >
-              {saved ? "Regenerate" : "Build insights"}
-            </button>
-          )}
-        </p>
-      </div>
+      <p className="text-meta text-ballpoint empty:hidden" aria-live="polite">
+        {updating && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="size-1.5 rounded-full bg-ballpoint motion-safe:animate-pulse" aria-hidden />
+            Updating{status.afterRun ? ` after run ${status.afterRun}` : ""}…
+          </span>
+        )}
+      </p>
 
       {loadError ? (
         <p className="mt-3 text-sm text-ochre">{loadError}</p>
@@ -246,7 +231,7 @@ export function InsightsPanel({
         </p>
       ) : (
         <div className={cn("transition-opacity", updating && "opacity-55")}>
-          <h3 id="insights-heading" className="mt-2 max-w-4xl font-display text-3xl leading-[1.02] font-extrabold tracking-tight text-balance sm:text-[2.875rem]">
+          <h3 id="insights-heading" className="max-w-4xl font-display text-3xl leading-[1.02] font-extrabold tracking-tight text-balance sm:text-[2.875rem] wide:text-[2.5rem]">
             <span className="sr-only">What the runs say: </span>
             {body.headline}
           </h3>
@@ -268,7 +253,7 @@ export function InsightsPanel({
                 // Older saved insights have no metric field; they were all val_rmse.
                 const metric: MetricKey = x.metric ?? x.comparison?.metric ?? (body?.metrics ? set.primary.key : "val_rmse");
                 return (
-                  <li key={i} className="grid gap-x-5 gap-y-0.5 py-3.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+                  <li key={i} className="grid gap-x-5 gap-y-0.5 py-3.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] wide:grid-cols-1">
                     <p className={cn("font-display text-base leading-snug font-bold", TYPE_INK[x.type])}>
                       {TYPE_LABEL[x.type]}
                     </p>
@@ -321,7 +306,7 @@ export function InsightsPanel({
 
           <details className="mt-2 text-note text-pencil">
             <summary className="tap w-fit cursor-pointer rounded-sm text-ballpoint">What the labels mean</summary>
-            <dl className="mt-2 grid max-w-3xl gap-x-5 gap-y-1.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+            <dl className="mt-2 grid max-w-3xl gap-x-5 gap-y-1.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] wide:grid-cols-1">
               {(Object.keys(TYPE_LABEL) as InsightType[]).map((t) => (
                 <Fragment key={t}>
                   <dt className={cn("font-display text-base leading-snug font-bold", TYPE_INK[t])}>{TYPE_LABEL[t]}</dt>
@@ -331,7 +316,7 @@ export function InsightsPanel({
             </dl>
           </details>
 
-          <div className="mt-4 grid gap-x-5 gap-y-1 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+          <div className="mt-4 grid gap-x-5 gap-y-1 sm:grid-cols-[6.5rem_minmax(0,1fr)] wide:grid-cols-1">
             <p className="font-display text-lg leading-snug font-extrabold text-graphite">Try next</p>
             <div className="min-w-0">
               <p className="max-w-[72ch] text-body leading-snug font-medium">{body.next_experiment.text}</p>
@@ -339,6 +324,21 @@ export function InsightsPanel({
             </div>
           </div>
         </div>
+      )}
+
+      {(saved || (canWrite && entryCount > 0 && !loadError)) && (
+        <p className="mt-5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dashed border-graphite/25 pt-3 text-meta text-pencil">
+          {saved && (
+            <span>
+              Numbers from W&B · updated after run {saved.after_run ?? "?"}, {saved.created_label}
+            </span>
+          )}
+          {canWrite && !updating && entryCount > 0 && !loadError && (
+            <button type="button" onClick={onRegenerate} className="tap rounded-sm text-ballpoint underline underline-offset-4">
+              {saved ? "Regenerate" : "Build insights"}
+            </button>
+          )}
+        </p>
       )}
 
       {status.kind === "error" && (

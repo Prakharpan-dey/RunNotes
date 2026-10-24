@@ -211,7 +211,7 @@ export function RunsTable({
       <TableHeader>
         <TableRow className="border-b-2 border-graphite/70 hover:bg-transparent">
           <TableHead className="hidden w-12 pl-4 text-note font-medium text-pencil sm:table-cell">No.</TableHead>
-          <TableHead className="pl-3 text-note font-medium text-pencil sm:pl-2">Run</TableHead>
+          <TableHead className="pl-3 text-note font-medium text-pencil sm:pl-2 md:min-w-[13rem]">Run</TableHead>
           <TableHead className="hidden text-note font-medium text-pencil md:table-cell">State</TableHead>
           <TableHead className="hidden text-note font-medium text-pencil md:table-cell">Started (IST)</TableHead>
           <TableHead className={cn("py-2 font-mono text-meta font-semibold text-graphite", !metrics.secondary && "pr-3 sm:pr-4")}>

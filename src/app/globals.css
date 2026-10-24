@@ -10,6 +10,8 @@
 */
 :root {
   --paper: #e9f0e2;
+  /* The desk the pad lies on: plain, a shade darker than the paper. Pencil text on it stays above 4.5:1. */
+  --desk: #e3eadc;
   --paper-raised: #f3f7ee;
   --grid: #d3e1ca;
   --grid-major: #bfd2b4;
@@ -62,6 +64,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  --color-desk: var(--desk);
   --color-paper: var(--paper);
   --color-paper-raised: var(--paper-raised);
   --color-grid: var(--grid);
@@ -70,6 +73,9 @@
   --color-ballpoint: var(--ballpoint);
   --color-correction: var(--correction);
   --color-ochre: var(--ochre);
+
+  /* Large monitors: the journal goes to two columns. */
+  --breakpoint-wide: 90rem;
 
   --font-sans: var(--font-schibsted);
   --font-mono: var(--font-martian);
@@ -114,6 +120,29 @@
   }
 }
 
+/*
+  The computation pad itself: 4mm squares, a heavier line every 5. Only on sheets of paper
+  (the journal, the connect form), never on the desk around them.
+  Like a real engineering pad, the grid is printed on the back of the sheet and shows
+  through faintly: there to rule against, never fighting the writing on top.
+*/
+@utility pad {
+  --show-through: color-mix(in oklab, var(--grid) 45%, var(--paper));
+  --show-through-major: color-mix(in oklab, var(--grid-major) 50%, var(--paper));
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--show-through-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--show-through-major) 1px, transparent 1px),
+    linear-gradient(var(--show-through) 1px, transparent 1px),
+    linear-gradient(90deg, var(--show-through) 1px, transparent 1px);
+  background-size:
+    80px 80px,
+    80px 80px,
+    16px 16px,
+    16px 16px;
+  background-position: -1px -1px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -122,20 +151,8 @@
     @apply font-sans;
   }
   body {
-    background-color: var(--paper);
+    background-color: var(--desk);
     color: var(--graphite);
-    /* 4mm minor grid, heavier line every 5 squares, as on a computation pad */
-    background-image:
-      linear-gradient(var(--grid-major) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
-      linear-gradient(var(--grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-    background-size:
-      80px 80px,
-      80px 80px,
-      16px 16px,
-      16px 16px;
-    background-position: -1px -1px;
   }
   :focus-visible {
     outline: 2px solid var(--ballpoint);

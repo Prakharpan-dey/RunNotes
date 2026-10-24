@@ -142,7 +142,7 @@ function ConnectForm({ initial }: { initial: Connection | null }) {
       <PageHeader />
       <ModeTabs active="workspace" />
 
-      <section className="max-w-3xl border-2 border-graphite/80 bg-paper/85 px-4 py-6 shadow-sheet sm:px-6">
+      <section className="pad max-w-3xl border-2 border-graphite/80 px-4 py-6 shadow-sheet sm:px-6">
         <h1 className="font-display text-4xl leading-none font-extrabold tracking-tight">Connect your W&B project</h1>
         <p className="mt-2 max-w-prose text-body leading-snug">
           Use RunNotes on your own runs: talk after each one, fix entries by voice, and see what your runs add up to. Your
