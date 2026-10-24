@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { buildLedger, type LedgerRow } from "@/lib/ledger";
-import { fetchRuns, WANDB_ENTITY, WANDB_PROJECT, WandbError } from "@/lib/wandb";
+import { fetchOwnerRunsCached, WANDB_ENTITY, WANDB_PROJECT, WandbError } from "@/lib/wandb";
 import { DbError, getEntries, OWNER_WORKSPACE } from "@/lib/supabase";
 import type { SavedEntry } from "@/lib/entry-schema";
 import { getLatestInsights } from "@/lib/insights";
@@ -17,7 +17,7 @@ import { isOwner } from "@/lib/owner";
 export default function Home() {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 sm:py-12">
-      <PageHeader />
+      <PageHeader as="h1" />
       <ModeTabs active="journal" />
       <Suspense fallback={<JournalSheet entity={WANDB_ENTITY} project={WANDB_PROJECT} metrics={OWNER_METRICS} rows={null} />}>
         <LoadedSheet />
@@ -36,7 +36,7 @@ async function LoadedSheet() {
   let insightsError: string | null = null;
   let demo: DemoRunSummary | null = null;
   const [runsResult, entriesResult, insightsResult, owner] = await Promise.allSettled([
-    fetchRuns(),
+    fetchOwnerRunsCached(),
     getEntries(OWNER_WORKSPACE),
     getLatestInsights({ workspace: OWNER_WORKSPACE, project: WANDB_PROJECT }),
     isOwner(),
@@ -55,7 +55,6 @@ async function LoadedSheet() {
         rmse: row.primary.value,
         pearson: row.secondary?.value ?? null,
         prevRunNumber: row.n > 1 ? row.n - 1 : null,
-        url: row.url,
       };
     }
   } else {

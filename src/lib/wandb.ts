@@ -1,4 +1,5 @@
 import "server-only";
+import { cacheLife } from "next/cache";
 
 export const WANDB_ENTITY = "prvkhvr-national-institute-of-technology-hamirpur";
 export const WANDB_PROJECT = "shl-grammar";
@@ -208,4 +209,16 @@ export async function inspectProject(source: WandbSource): Promise<{ runCount: n
     .map(([key]) => key)
     .slice(0, 60);
   return { runCount: runs.length, metricKeys };
+}
+
+/**
+ * The owner journal's runs for page views, cached for a minute (served stale for up to
+ * 10 minutes while refreshing) so every visitor doesn't cost a W&B round trip. Writes and
+ * visitor workspaces call fetchRuns directly and always see live data, so an entry for a
+ * run you just logged never hits a stale list.
+ */
+export async function fetchOwnerRunsCached(): Promise<Run[]> {
+  "use cache";
+  cacheLife({ stale: 30, revalidate: 60, expire: 600 });
+  return fetchRuns(ownerSource());
 }

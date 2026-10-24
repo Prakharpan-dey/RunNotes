@@ -41,12 +41,12 @@ export function OwnerFooter({ isOwner }: { isOwner: boolean }) {
   }
 
   return (
-    <footer className="mt-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-[12px] text-pencil">
+    <footer className="mt-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-meta text-pencil">
       <p>RunNotes · an experiment journal you fill in by talking</p>
       {isOwner ? (
         <p className="flex items-center gap-3">
           <span className="font-mono text-ballpoint">Owner mode</span>
-          <button type="button" onClick={signOut} className="rounded-sm underline underline-offset-4">
+          <button type="button" onClick={signOut} className="tap rounded-sm underline underline-offset-4">
             Sign out
           </button>
         </p>
@@ -63,16 +63,16 @@ export function OwnerFooter({ isOwner }: { isOwner: boolean }) {
             value={passcode}
             onChange={(e) => setPasscode(e.target.value)}
             placeholder="Passcode"
-            className="h-7 w-36 rounded-sm border border-graphite/40 bg-paper-raised px-2 font-mono text-[12px] text-graphite"
+            className="h-11 w-36 rounded-sm border border-graphite/40 bg-paper-raised px-2 font-mono text-meta text-graphite placeholder:text-pencil sm:h-8"
           />
           <button
             type="submit"
             disabled={pending || !passcode}
-            className="h-7 rounded-sm border border-graphite/60 px-2.5 text-graphite disabled:opacity-50"
+            className="h-11 rounded-sm border border-graphite/60 px-3 text-graphite disabled:opacity-50 sm:h-8"
           >
             {pending ? "Unlocking…" : "Unlock"}
           </button>
-          <button type="button" onClick={() => setOpen(false)} className="rounded-sm underline underline-offset-4">
+          <button type="button" onClick={() => setOpen(false)} className="tap rounded-sm underline underline-offset-4">
             Cancel
           </button>
           {error && (
@@ -82,7 +82,7 @@ export function OwnerFooter({ isOwner }: { isOwner: boolean }) {
           )}
         </form>
       ) : (
-        <button type="button" onClick={() => setOpen(true)} className="rounded-sm underline underline-offset-4">
+        <button type="button" onClick={() => setOpen(true)} className="tap rounded-sm underline underline-offset-4">
           Owner
         </button>
       )}

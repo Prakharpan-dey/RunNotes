@@ -20,9 +20,11 @@ export function JournalView({
   insights: initialInsights,
   insightsError,
   canWrite,
+  wandbLinks,
   metrics,
 }: {
   canWrite: boolean;
+  wandbLinks: boolean;
   metrics: MetricSet;
   rows: LedgerRow[];
   entries: Record<string, SavedEntry>;
@@ -109,6 +111,7 @@ export function JournalView({
         loadError={insightsError}
         onRegenerate={regenerate}
         onGoToRun={goToRun}
+        runHref={(n) => (byNumber.has(n) ? `#run-row-${byNumber.get(n)}` : "#")}
         canWrite={canWrite}
         metrics={metrics}
       />
@@ -119,6 +122,7 @@ export function JournalView({
         onOpenChange={setOpen}
         flashId={flashId}
         canWrite={canWrite}
+        wandbLinks={wandbLinks}
         metrics={metrics}
         onEntryChanged={(runId) => {
           setLoggedIds((prev) => (prev.has(runId) ? prev : new Set(prev).add(runId)));

@@ -7,19 +7,35 @@ import { cn } from "@/lib/utils";
 import type { SavedEntry } from "@/lib/entry-schema";
 import { useApiFetch } from "@/components/api-context";
 
+/** "Hold Fn and talk" with Fn drawn as a key. */
+export function KeyHint({ text }: { text: string }) {
+  const [before, ...rest] = text.split("Fn");
+  if (rest.length === 0) return <>{text}</>;
+  return (
+    <>
+      {before}
+      <kbd className="rounded-sm border border-graphite/40 bg-paper-raised px-1 py-px font-mono text-meta text-graphite">Fn</kbd>
+      {rest.join("Fn")}
+    </>
+  );
+}
+
 /** The "What happened?" box. Posts to /api/entry for the journal, or another endpoint for the demo. */
 export function EntryComposer({
   runId,
   onSaved,
   endpoint = "/api/entry",
-  placeholder = "Hold Fn and talk it through",
+  hint = "Hold Fn and talk it through",
+  placeholder = "What you changed, what you saw, what you’ll try next…",
   buttonLabel = "Write entry",
   pendingLabel = "Writing entry…",
-  helper = "What you changed, what you saw, what you’ll try next. Ramble; it gets cleaned up.",
+  helper = "Ramble freely: filler words and self-corrections get cleaned up.",
 }: {
   runId: string;
   onSaved: (entry: SavedEntry, response: Record<string, unknown>) => void;
   endpoint?: string;
+  /** Shown under the label, always visible (a placeholder disappears as soon as you start talking). */
+  hint?: string;
   placeholder?: string;
   buttonLabel?: string;
   pendingLabel?: string;
@@ -29,6 +45,8 @@ export function EntryComposer({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; limited: boolean } | null>(null);
   const id = useId();
+  const hintId = useId();
+  const errorId = useId();
   const apiFetch = useApiFetch();
 
   async function submit(e: React.FormEvent) {
@@ -60,25 +78,34 @@ export function EntryComposer({
       <label htmlFor={id} className="font-display text-2xl font-extrabold tracking-tight">
         What happened?
       </label>
+      <p id={hintId} className="mt-0.5 text-note text-pencil">
+        <KeyHint text={hint} />
+      </p>
       <Textarea
         id={id}
+        aria-describedby={error ? `${hintId} ${errorId}` : hintId}
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
+        }}
         placeholder={placeholder}
         disabled={pending}
         rows={7}
-        className="mt-2 min-h-44 resize-y rounded-sm border-graphite/40 bg-paper-raised px-4 py-3 text-[15px] leading-relaxed placeholder:font-hand placeholder:text-lg placeholder:text-pencil/70 focus-visible:border-ballpoint focus-visible:ring-ballpoint/20 md:text-[15px]"
+        className="mt-2 min-h-44 resize-y rounded-sm border-graphite/40 bg-paper-raised px-4 py-3 text-body leading-relaxed placeholder:font-hand placeholder:text-lg placeholder:text-pencil focus-visible:border-ballpoint focus-visible:ring-ballpoint/20 md:text-body"
       />
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <Button type="submit" disabled={pending || !notes.trim()} className="h-9 rounded-sm px-4">
+        <Button type="submit" disabled={pending || !notes.trim()} className="h-11 rounded-sm px-4 sm:h-9">
           {pending ? pendingLabel : buttonLabel}
         </Button>
         {error ? (
-          <p role="alert" className={cn("max-w-prose text-sm", error.limited ? "text-ochre" : "text-correction")}>
+          <p id={errorId} role="alert" className={cn("max-w-prose text-sm", error.limited ? "text-ochre" : "text-correction")}>
             {error.message}
           </p>
         ) : (
-          <p className="text-[12px] text-pencil">{helper}</p>
+          <p className="text-meta text-pencil">
+            {helper} <span className="hidden sm:inline">Ctrl+Enter to send.</span>
+          </p>
         )}
       </div>
     </form>
