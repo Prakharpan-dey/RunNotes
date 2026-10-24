@@ -358,7 +358,7 @@ async function extractPredictions(
 const WRITE_SYSTEM = `You write the words for an ML experiment journal's insights panel. The facts are already decided by code; you only phrase them.
 
 Write:
-- headline: at most ${HEADLINE_MAX_WORDS} words, about the HEADLINE FACT only. Lead with the change, e.g. "Adding text features set a new best score."
+- headline: at most ${HEADLINE_MAX_WORDS} words: the takeaway across all the facts, led by the HEADLINE FACT. Say what it means next to the others, e.g. "Text features are the only change that has helped so far." or "Text features helped; embeddings keep making things worse." Never repeat or paraphrase one of your sentences.
 - sentences: exactly one plain-English sentence for every fact id given, and no other ids. Keep each fact's meaning:
   - lever: this change set a new best score compared with the previous best run. Name the setting that changed.
   - no_effect: main_change made no real difference compared with the best run so far. Name main_change as the thing that didn't matter; mention changed_alongside only as what came with it, never as the cause, e.g. "Adding sentence embeddings, along with setting alpha to 100, made no real difference compared with the best run so far."
@@ -370,6 +370,16 @@ Rules:
 - No metric values, score differences or percentages, except the predicted value inside a prediction_check sentence.
 - Don't add claims beyond the facts. Explanations from the notes are the person's guesses: attribute them ("I suspect...").
 - Plain English. Changes are already written as "-ing" phrases ("adding text features", "switching from Ridge to LightGBM", "setting alpha to 100"). Use them after "by", "from" or "after", or as the subject ("Adding sentence embeddings made no real difference"). Start every sentence with a capital letter. Keep model names capitalised as given.`;
+
+/** Share of the shorter text's words that also appear in the other, 0 to 1. */
+function overlap(a: string, b: string): number {
+  const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+  const wa = words(a);
+  const wb = words(b);
+  let shared = 0;
+  for (const w of wa) if (wb.has(w)) shared++;
+  return shared / Math.max(1, Math.min(wa.size, wb.size));
+}
 
 function runLabel(rows: Row[], n: number): string {
   const row = rows[n - 1];
@@ -607,6 +617,10 @@ LATEST NEXT STEPS (from run ${latest.n}'s entry): ${JSON.stringify(latest.entry!
       const extra = [...got].filter((id) => !ids.includes(id));
       if (missing.length) problems.push(`Write a sentence for these ids too: ${missing.join(", ")}.`);
       if (extra.length) problems.push(`Remove sentences for ids that weren't given: ${extra.join(", ")}.`);
+      const echoed = w.sentences.find((s) => overlap(w.headline, s.text) > 0.75);
+      if (echoed) {
+        problems.push(`The headline repeats the sentence for ${echoed.id}. Make it the takeaway across all the facts instead.`);
+      }
       if (wordCount(w.headline) > HEADLINE_MAX_WORDS) {
         problems.push(`The headline has ${wordCount(w.headline)} words; cut it to ${HEADLINE_MAX_WORDS} or fewer.`);
       }

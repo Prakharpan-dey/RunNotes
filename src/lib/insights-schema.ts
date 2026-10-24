@@ -40,7 +40,7 @@ export const PredictionExtractSchema = z.object({
  * One sentence per fact id; it can't add or drop insights.
  */
 export const InsightsWriteSchema = z.object({
-  headline: z.string().min(3).max(160).describe(`At most ${HEADLINE_MAX_WORDS} words, about HEADLINE FACT. No metric values`),
+  headline: z.string().min(3).max(160).describe(`At most ${HEADLINE_MAX_WORDS} words: the takeaway across the facts, led by HEADLINE FACT. No metric values`),
   sentences: z
     .array(z.object({ id: z.string(), text: z.string().min(3).max(240) }))
     .describe("Exactly one sentence for every fact id, in any order"),

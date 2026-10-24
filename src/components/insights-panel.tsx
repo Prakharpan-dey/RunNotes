@@ -1,25 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { createContext, Fragment, useContext, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { Comparison, InsightType, MetricKey, PredictionResult, RunFact, SavedInsights } from "@/lib/insights-schema";
-import type { MetricSet, MetricSpec } from "@/lib/metrics";
+import type { Comparison, Insight, InsightType, MetricKey, PredictionResult, RunFact, SavedInsights } from "@/lib/insights-schema";
+import { NOISE_REL, REGRESSION_REL, type MetricSet } from "@/lib/metrics";
 
 /** Prediction checks shown before "Show more". */
 const VISIBLE_PREDICTIONS = 2;
 
+/** Margin notes, as you'd write them beside a result on the pad: short enough never to wrap. */
 const TYPE_LABEL: Record<InsightType, string> = {
-  lever: "Lever",
+  lever: "New best",
   no_effect: "No effect",
-  regression: "Regression",
-  prediction_check: "Prediction check",
+  regression: "Setback",
+  prediction_check: "Prediction",
 };
 
-const TYPE_STYLE: Record<InsightType, string> = {
-  lever: "border-ballpoint text-ballpoint",
-  no_effect: "border-pencil/60 text-pencil",
-  regression: "border-correction text-correction",
-  prediction_check: "border-ochre text-ochre",
+const TYPE_HELP: Record<InsightType, string> = {
+  lever: "A change that set a new best score.",
+  no_effect: `A change that moved the score by less than the run-to-run noise (${NOISE_REL * 100}% of the best).`,
+  regression: `A change that made the score clearly worse than the best so far (by more than ${REGRESSION_REL * 100}%).`,
+  prediction_check: "Something you said you expected, checked against what W&B logged.",
+};
+
+const TYPE_INK: Record<InsightType, string> = {
+  lever: "text-ballpoint",
+  no_effect: "text-pencil",
+  regression: "text-correction",
+  prediction_check: "text-ochre",
 };
 
 export type InsightsStatus =
@@ -27,15 +35,19 @@ export type InsightsStatus =
   | { kind: "updating"; afterRun: number | null }
   | { kind: "error"; message: string };
 
+/** Where "run N" links point, so they also work opened in a new tab or without JavaScript. */
+const RunHref = createContext<(n: number) => string>(() => "#");
+
 function RunLink({ n, onGo }: { n: number; onGo: (n: number) => void }) {
+  const href = useContext(RunHref)(n);
   return (
     <a
-      href={`#run-${n}`}
+      href={href}
       onClick={(e) => {
         e.preventDefault();
         onGo(n);
       }}
-      className="rounded-sm font-mono text-[12px] text-ballpoint underline decoration-ballpoint/40 underline-offset-[3px] hover:decoration-ballpoint"
+      className="tap rounded-sm font-medium whitespace-nowrap text-ballpoint underline decoration-ballpoint/35 underline-offset-2 hover:decoration-ballpoint"
     >
       run {n}
     </a>
@@ -51,68 +63,98 @@ function metricValue(f: RunFact, metric: MetricKey, set: MetricSet): number | nu
   return null;
 }
 
-function specFor(metric: MetricKey, set: MetricSet): MetricSpec | null {
-  return metric === set.primary.key ? set.primary : metric === set.secondary?.key ? set.secondary : null;
-}
-
-function Fact({ fact, metric, set, onGo }: { fact: RunFact; metric: MetricKey; set: MetricSet; onGo: (n: number) => void }) {
-  const value = metricValue(fact, metric, set);
+function Signed({ delta, improved }: { delta: number; improved: boolean | null }) {
   return (
-    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-      <RunLink n={fact.n} onGo={onGo} />
-      <span className="font-mono text-[12px] tabular-nums">{value === null ? "—" : value.toFixed(3)}</span>
+    <span
+      className={cn(
+        "font-mono tabular-nums",
+        improved === true ? "text-ballpoint" : improved === false ? "text-correction" : "text-pencil",
+      )}
+    >
+      {delta > 0 ? "+" : delta < 0 ? "−" : "±"}
+      {Math.abs(delta).toFixed(3)}
+      <span className="sr-only">{improved === true ? " (better)" : improved === false ? " (worse)" : ""}</span>
     </span>
   );
 }
 
-/** Predicted vs actual on the predicted metric; every number and the colour come from code. */
-function PredictionLine({ p, set, onGo }: { p: PredictionResult; set: MetricSet; onGo: (n: number) => void }) {
-  const spec = specFor(p.metric, set);
-  const name = spec?.label ?? p.metric;
+// Saved before `improved` existed: those were all val_rmse, where lower is better.
+const improvedOf = (c: Comparison) => (c.improved !== undefined ? c.improved : c.delta === 0 ? null : c.delta < 0);
+
+/** "run 4 0.672": one run, one value. */
+function At({ n, value, onGo }: { n: number; value: number | null; onGo: (n: number) => void }) {
   return (
-    <p className="mt-1 text-[13px] leading-relaxed text-pencil">
-      <span className="font-hand text-[16px] text-graphite">“{p.quote}”</span>{" "}
-      {/* Wraps between phrases on a phone; each number stays with its label. */}
-      {p.comparison === "beat_run" && p.target_run ? (
-        <span className="whitespace-nowrap">
-          Predicted {name} to beat <RunLink n={p.target_run} onGo={onGo} />{" "}
-          <span className="font-mono text-[12px] text-graphite">{p.predicted.toFixed(3)}</span>;
+    <span className="whitespace-nowrap">
+      <RunLink n={n} onGo={onGo} />{" "}
+      <span className="font-mono text-graphite tabular-nums">{value === null ? "—" : value.toFixed(3)}</span>
+    </span>
+  );
+}
+
+/**
+ * The runs behind a finding, chained the way you'd write them on the pad
+ * ("run 1 0.702 → run 4 0.672 · −0.030 vs run 1"): each run once, the change once.
+ */
+function Trail({ x, metric, set, onGo }: { x: Insight; metric: MetricKey; set: MetricSet; onGo: (n: number) => void }) {
+  return (
+    <p className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-note text-pencil">
+      {x.facts.map((f, i) => (
+        <Fragment key={f.n}>
+          {i > 0 && (
+            <span>
+              <span aria-hidden>→</span>
+              <span className="sr-only">then</span>
+            </span>
+          )}
+          <At n={f.n} value={metricValue(f, metric, set)} onGo={onGo} />
+        </Fragment>
+      ))}
+      {x.comparison && (
+        <span className="ml-1.5 whitespace-nowrap">
+          <Signed delta={x.comparison.delta} improved={improvedOf(x.comparison)} /> vs run {x.comparison.from}
         </span>
-      ) : (
-        <span className="whitespace-nowrap">
-          Predicted {name} {p.comparison}{" "}
-          <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>;
+      )}
+      {x.recovery && (
+        <span className="ml-1.5 whitespace-nowrap">
+          then run {x.recovery.to} recovered to <Signed delta={x.recovery.delta} improved={improvedOf(x.recovery)} /> vs run{" "}
+          {x.recovery.from}
         </span>
-      )}{" "}
-      <span className="whitespace-nowrap">
-        actual on <RunLink n={p.tested_run} onGo={onGo} />{" "}
-        <span className="font-mono text-[12px] text-graphite">{p.actual.toFixed(3)}</span>
-      </span>{" "}
-      <span
-        className={cn(
-          "font-mono text-[11px] whitespace-nowrap tabular-nums",
-          p.better === true ? "text-ballpoint" : p.better === false ? "text-correction" : "text-pencil",
-        )}
-        title={p.better ? `Better than predicted (${spec?.higherIsBetter ? "higher" : "lower"} is better)` : "Worse than predicted"}
-      >
-        {p.delta > 0 ? "+" : p.delta < 0 ? "−" : "±"}
-        {Math.abs(p.delta).toFixed(3)} vs prediction
-      </span>
+      )}
+      {metric !== set.primary.key && <span className="ml-1.5">({metric})</span>}
     </p>
   );
 }
 
-function ComparisonChip({ c }: { c: Comparison }) {
-  // Saved before `improved` existed: those were all val_rmse, where lower is better.
-  const improved = c.improved !== undefined ? c.improved : c.delta === 0 ? null : c.delta < 0;
+/** The person's own words, then the result marked against them like a teacher's tick. */
+function PredictionNote({ p, onGo }: { p: PredictionResult; onGo: (n: number) => void }) {
+  const verdict = p.better === true ? "held" : p.better === false ? "missed" : "about right";
   return (
-    <span className="font-mono text-[11px] whitespace-nowrap text-pencil tabular-nums">
-      {c.from} → {c.to}{" "}
-      <span className={cn(improved === true ? "text-ballpoint" : improved === false ? "text-correction" : "text-pencil")}>
-        {c.delta > 0 ? "+" : c.delta < 0 ? "−" : "±"}
-        {Math.abs(c.delta).toFixed(3)}
+    <p className="mt-1.5 text-note leading-relaxed text-pencil">
+      <span className="font-hand text-hand text-graphite">“{p.quote}”</span>{" "}
+      <span className="whitespace-nowrap">
+        <RunLink n={p.tested_run} onGo={onGo} /> came in at{" "}
+        <span className="font-mono text-graphite tabular-nums">{p.actual.toFixed(3)}</span>
       </span>
-    </span>
+      {", "}
+      {p.comparison === "beat_run" && p.target_run ? (
+        <span className="whitespace-nowrap">
+          against <At n={p.target_run} value={p.predicted} onGo={onGo} />
+        </span>
+      ) : (
+        <span className="whitespace-nowrap">
+          predicted {p.comparison} <span className="font-mono text-graphite tabular-nums">{p.predicted}</span>
+        </span>
+      )}{" "}
+      <span
+        className={cn(
+          "ml-1 font-hand text-hand whitespace-nowrap",
+          p.better === true ? "text-ballpoint" : p.better === false ? "text-correction" : "text-pencil",
+        )}
+      >
+        {verdict}
+        {p.better !== null && ` by ${Math.abs(p.delta).toFixed(3)}`}
+      </span>
+    </p>
   );
 }
 
@@ -125,7 +167,10 @@ export function InsightsPanel({
   onGoToRun,
   canWrite,
   metrics,
+  runHref,
 }: {
+  /** The URL of a run's row, e.g. "#run-row-abc123". */
+  runHref: (n: number) => string;
   saved: SavedInsights | null;
   /** The journal's metrics; saved insights carry their own, which win. */
   metrics: MetricSet;
@@ -145,19 +190,26 @@ export function InsightsPanel({
   // Keep the panel to about one screen: every lever, regression and no-effect, but only the
   // newest prediction checks (they arrive newest first). The rest sit behind "Show more".
   const [showAll, setShowAll] = useState(false);
-  const all = body?.insights ?? [];
+  const recoveries = (body?.insights ?? []).flatMap((x) => (x.recovery ? [`${x.recovery.from}>${x.recovery.to}`] : []));
+  const all = (body?.insights ?? []).filter(
+    (x) => !(x.type === "no_effect" && x.comparison && recoveries.includes(`${x.comparison.from}>${x.comparison.to}`)),
+  );
   let predictionsShown = 0;
   const collapsed = all.filter((x) => x.type !== "prediction_check" || predictionsShown++ < VISIBLE_PREDICTIONS);
   const hiddenCount = all.length - collapsed.length;
   const visible = showAll ? all : collapsed;
 
   return (
+    <RunHref.Provider value={runHref}>
     <section aria-labelledby="insights-heading" aria-busy={updating} className="border-b-2 border-graphite/80 px-4 py-5 sm:px-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <h2 id="insights-heading" className="font-display text-xs font-bold tracking-[0.14em] text-pencil uppercase">
+      {/* The headline is the section's heading; with no headline yet, the heading is for screen readers only. */}
+      {!body && (
+        <h3 id="insights-heading" className="sr-only">
           What the runs say
-        </h2>
-        <p className="flex items-center gap-3 font-mono text-[11px] text-pencil" aria-live="polite">
+        </h3>
+      )}
+      <div className="flex flex-wrap items-baseline justify-end gap-x-6 gap-y-1">
+        <p className="flex items-center gap-3 font-mono text-meta text-pencil" aria-live="polite">
           {updating ? (
             <span className="inline-flex items-center gap-1.5 text-ballpoint">
               <span className="size-1.5 rounded-full bg-ballpoint motion-safe:animate-pulse" aria-hidden />
@@ -165,14 +217,14 @@ export function InsightsPanel({
             </span>
           ) : saved ? (
             <span>
-              updated after run {saved.after_run ?? "?"} · {saved.created_label}
+              numbers from W&B · updated after run {saved.after_run ?? "?"} · {saved.created_label}
             </span>
           ) : null}
           {canWrite && !updating && entryCount > 0 && !loadError && (
             <button
               type="button"
               onClick={onRegenerate}
-              className="rounded-sm font-sans text-[12px] text-ballpoint underline underline-offset-4"
+              className="tap rounded-sm font-sans text-meta text-ballpoint underline underline-offset-4"
             >
               {saved ? "Regenerate" : "Build insights"}
             </button>
@@ -194,12 +246,13 @@ export function InsightsPanel({
         </p>
       ) : (
         <div className={cn("transition-opacity", updating && "opacity-55")}>
-          <p className="mt-2 max-w-4xl font-display text-3xl leading-[1.05] font-extrabold tracking-tight text-balance sm:text-[2.6rem]">
+          <h3 id="insights-heading" className="mt-2 max-w-4xl font-display text-3xl leading-[1.02] font-extrabold tracking-tight text-balance sm:text-[2.875rem]">
+            <span className="sr-only">What the runs say: </span>
             {body.headline}
-          </p>
+          </h3>
 
           {stale && (
-            <p className="mt-2 text-[12px] text-ochre">
+            <p className="mt-2 text-meta text-ochre">
               Built from {saved.entry_count} {saved.entry_count === 1 ? "entry" : "entries"}; you now have {entryCount}.
               Regenerate to include the rest.
             </p>
@@ -215,47 +268,36 @@ export function InsightsPanel({
                 // Older saved insights have no metric field; they were all val_rmse.
                 const metric: MetricKey = x.metric ?? x.comparison?.metric ?? (body?.metrics ? set.primary.key : "val_rmse");
                 return (
-                  <li key={i} className="grid gap-x-4 gap-y-1.5 py-3 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
-                    <span
-                      className={cn(
-                        "h-fit w-fit rounded-sm border px-1.5 py-px font-mono text-[10px] font-semibold tracking-wide uppercase",
-                        TYPE_STYLE[x.type],
-                      )}
-                    >
+                  <li key={i} className="grid gap-x-5 gap-y-0.5 py-3.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+                    <p className={cn("font-display text-base leading-snug font-bold", TYPE_INK[x.type])}>
                       {TYPE_LABEL[x.type]}
-                    </span>
+                    </p>
                     <div className="min-w-0">
-                      <p className="text-[15px] leading-snug">{x.text}</p>
-                      {x.prediction ? (
-                        <PredictionLine p={x.prediction} set={set} onGo={onGoToRun} />
-                      ) : x.type === "prediction_check" && x.predicted && actual && (
-                        <p className="mt-1 text-[13px] text-pencil">
-                          You predicted <span className="font-hand text-[16px] text-graphite">“{x.predicted}”</span>; W&B
-                          logged{" "}
-                          <span className="font-mono text-[12px] text-graphite">
-                            {metricValue(actual, metric, set)?.toFixed(3) ?? "—"}
-                          </span>{" "}
-                          {metric} on run {actual.n}.
-                        </p>
-                      )}
-                      <p className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                        {x.comparison && x.type !== "prediction_check" && (
-                          <span className="text-[11px] text-pencil">
-                            {x.type === "lever" ? "previous best → new best" : "best so far → this run"}
-                          </span>
+                      <p
+                        className={cn(
+                          "max-w-[72ch] leading-snug",
+                          x.type === "lever" ? "text-hand font-medium text-graphite" : "text-body",
+                          x.type === "no_effect" && "text-pencil",
                         )}
-                        {x.facts.map((f) => (
-                          <Fact key={f.n} fact={f} metric={metric} set={set} onGo={onGoToRun} />
-                        ))}
-                        {x.comparison && <ComparisonChip c={x.comparison} />}
-                        {x.recovery && (
-                          <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-                            <span className="text-[11px] text-pencil">recovered</span>
-                            <ComparisonChip c={x.recovery} />
-                          </span>
-                        )}
-                        <span className="text-[11px] text-pencil">{metric} from W&B</span>
+                      >
+                        {x.text}
                       </p>
+                      {x.prediction ? (
+                        <PredictionNote p={x.prediction} onGo={onGoToRun} />
+                      ) : x.type === "prediction_check" ? (
+                        x.predicted &&
+                        actual && (
+                          <p className="mt-1.5 text-note text-pencil">
+                            <span className="font-hand text-hand text-graphite">“{x.predicted}”</span>{" "}
+                            <RunLink n={actual.n} onGo={onGoToRun} /> came in at{" "}
+                            <span className="font-mono text-graphite tabular-nums">
+                              {metricValue(actual, metric, set)?.toFixed(3) ?? "—"}
+                            </span>
+                          </p>
+                        )
+                      ) : (
+                        <Trail x={x} metric={metric} set={set} onGo={onGoToRun} />
+                      )}
                     </div>
                   </li>
                 );
@@ -269,7 +311,7 @@ export function InsightsPanel({
               onClick={() => setShowAll((v) => !v)}
               aria-expanded={showAll}
               aria-controls="insights-list"
-              className="mt-2 rounded-sm text-[13px] text-ballpoint underline underline-offset-4"
+              className="tap mt-2 rounded-sm text-note text-ballpoint underline underline-offset-4"
             >
               {showAll
                 ? "Show fewer"
@@ -277,11 +319,23 @@ export function InsightsPanel({
             </button>
           )}
 
-          <div className="mt-4 grid gap-x-4 gap-y-1 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
-            <p className="font-display text-sm font-bold tracking-wide text-graphite uppercase">Try next →</p>
+          <details className="mt-2 text-note text-pencil">
+            <summary className="tap w-fit cursor-pointer rounded-sm text-ballpoint">What the labels mean</summary>
+            <dl className="mt-2 grid max-w-3xl gap-x-5 gap-y-1.5 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+              {(Object.keys(TYPE_LABEL) as InsightType[]).map((t) => (
+                <Fragment key={t}>
+                  <dt className={cn("font-display text-base leading-snug font-bold", TYPE_INK[t])}>{TYPE_LABEL[t]}</dt>
+                  <dd className="max-w-[72ch]">{TYPE_HELP[t]}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </details>
+
+          <div className="mt-4 grid gap-x-5 gap-y-1 sm:grid-cols-[6.5rem_minmax(0,1fr)]">
+            <p className="font-display text-lg leading-snug font-extrabold text-graphite">Try next</p>
             <div className="min-w-0">
-              <p className="text-[15px] leading-snug font-medium">{body.next_experiment.text}</p>
-              {body.next_experiment.why && <p className="mt-0.5 text-[13px] text-pencil">{body.next_experiment.why}</p>}
+              <p className="max-w-[72ch] text-body leading-snug font-medium">{body.next_experiment.text}</p>
+              {body.next_experiment.why && <p className="mt-0.5 text-note text-pencil">{body.next_experiment.why}</p>}
             </div>
           </div>
         </div>
@@ -293,5 +347,6 @@ export function InsightsPanel({
         </p>
       )}
     </section>
+    </RunHref.Provider>
   );
 }
