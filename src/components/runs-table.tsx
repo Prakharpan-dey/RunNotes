@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, NotebookPen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LedgerRow, MetricCell } from "@/lib/ledger";
+import type { MetricSet } from "@/lib/metrics";
 import type { SavedEntry } from "@/lib/entry-schema";
 import { EntryCard } from "@/components/entry-card";
 import { EntryComposer } from "@/components/entry-composer";
@@ -118,8 +119,11 @@ export function RunsTable({
   flashId,
   onEntryChanged,
   canWrite,
+  metrics,
 }: {
   rows: LedgerRow[];
+  /** Which metrics the columns show, with their directions. */
+  metrics: MetricSet;
   /** Owner mode: show the dictation and Fix it boxes. The server checks again on every write. */
   canWrite: boolean;
   initialEntries: Record<string, SavedEntry>;
@@ -155,14 +159,20 @@ export function RunsTable({
           <TableHead className="pl-3 font-display text-sm font-bold tracking-wide text-pencil uppercase sm:pl-2">Run</TableHead>
           <TableHead className="hidden font-display text-sm font-bold tracking-wide text-pencil uppercase md:table-cell">State</TableHead>
           <TableHead className="hidden font-display text-sm font-bold tracking-wide text-pencil uppercase md:table-cell">Started (IST)</TableHead>
-          <TableHead className="py-2 font-mono text-[12px] font-semibold text-graphite">
-            val_rmse
-            <span className="block font-sans text-[10px] font-normal text-pencil">lower is better</span>
+          <TableHead className={cn("py-2 font-mono text-[12px] font-semibold text-graphite", !metrics.secondary && "pr-3 sm:pr-4")}>
+            {metrics.primary.key}
+            <span className="block font-sans text-[10px] font-normal text-pencil">
+              {metrics.primary.higherIsBetter ? "higher" : "lower"} is better
+            </span>
           </TableHead>
-          <TableHead className="py-2 pr-3 font-mono sm:pr-4 text-[12px] font-semibold text-graphite">
-            val_pearson
-            <span className="block font-sans text-[10px] font-normal text-pencil">higher is better</span>
-          </TableHead>
+          {metrics.secondary && (
+            <TableHead className="py-2 pr-3 font-mono sm:pr-4 text-[12px] font-semibold text-graphite">
+              {metrics.secondary.key}
+              <span className="block font-sans text-[10px] font-normal text-pencil">
+                {metrics.secondary.higherIsBetter ? "higher" : "lower"} is better
+              </span>
+            </TableHead>
+          )}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -209,10 +219,10 @@ export function RunsTable({
                 <TableCell className="py-3">
                   <span className="flex flex-col items-start gap-0.5 sm:inline-flex sm:flex-row sm:items-baseline sm:gap-2">
                     <span className={cn("relative inline-block", row.isBest && "mr-2")}>
-                      <Value value={row.rmse.value} />
+                      <Value value={row.primary.value} />
                       {row.isBest && <PenLoop />}
                     </span>
-                    <Delta cell={row.rmse} />
+                    <Delta cell={row.primary} />
                     {row.isBest && (
                       <span className="pen-note ml-1 hidden sm:inline-block font-hand text-[17px] leading-none text-ballpoint">
                         ← best so far
@@ -220,12 +230,14 @@ export function RunsTable({
                     )}
                   </span>
                 </TableCell>
-                <TableCell className="py-3 pr-3 sm:pr-4">
-                  <span className="flex flex-col items-start gap-0.5 sm:inline-flex sm:flex-row sm:items-baseline sm:gap-2">
-                    <Value value={row.pearson.value} />
-                    <Delta cell={row.pearson} />
-                  </span>
-                </TableCell>
+                {row.secondary && (
+                  <TableCell className="py-3 pr-3 sm:pr-4">
+                    <span className="flex flex-col items-start gap-0.5 sm:inline-flex sm:flex-row sm:items-baseline sm:gap-2">
+                      <Value value={row.secondary.value} />
+                      <Delta cell={row.secondary} />
+                    </span>
+                  </TableCell>
+                )}
               </TableRow>
               {isOpen && (
                 <TableRow id={`run-${row.id}`} className="border-grid-major/80 bg-paper-raised/80 hover:bg-paper-raised/80">

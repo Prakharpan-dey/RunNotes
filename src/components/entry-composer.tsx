@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { SavedEntry } from "@/lib/entry-schema";
+import { useApiFetch } from "@/components/api-context";
 
 /** The "What happened?" box. Posts to /api/entry for the journal, or another endpoint for the demo. */
 export function EntryComposer({
@@ -28,6 +29,7 @@ export function EntryComposer({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; limited: boolean } | null>(null);
   const id = useId();
+  const apiFetch = useApiFetch();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,7 +37,7 @@ export function EntryComposer({
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId, notes }),

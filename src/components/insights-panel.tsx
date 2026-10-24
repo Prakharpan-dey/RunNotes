@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import type { Comparison, InsightType, MetricKey, PredictionResult, RunFact, SavedInsights } from "@/lib/insights-schema";
+import type { MetricSet, MetricSpec } from "@/lib/metrics";
 
 /** Prediction checks shown before "Show more". */
 const VISIBLE_PREDICTIONS = 2;
-import type { Comparison, InsightType, MetricKey, PredictionResult, RunFact, SavedInsights } from "@/lib/insights-schema";
 
 const TYPE_LABEL: Record<InsightType, string> = {
   lever: "Lever",
@@ -41,12 +42,21 @@ function RunLink({ n, onGo }: { n: number; onGo: (n: number) => void }) {
   );
 }
 
-function metricValue(f: RunFact, metric: MetricKey): number | null {
-  return metric === "val_pearson" ? f.pearson : f.rmse;
+/** A run's value for a metric. Insights saved before metrics were configurable used rmse/pearson fields. */
+function metricValue(f: RunFact, metric: MetricKey, set: MetricSet): number | null {
+  if (metric === set.primary.key && f.primary !== undefined) return f.primary;
+  if (metric === set.secondary?.key && f.secondary !== undefined) return f.secondary;
+  if (metric === "val_rmse") return f.rmse ?? null;
+  if (metric === "val_pearson") return f.pearson ?? null;
+  return null;
 }
 
-function Fact({ fact, metric, onGo }: { fact: RunFact; metric: MetricKey; onGo: (n: number) => void }) {
-  const value = metricValue(fact, metric);
+function specFor(metric: MetricKey, set: MetricSet): MetricSpec | null {
+  return metric === set.primary.key ? set.primary : metric === set.secondary?.key ? set.secondary : null;
+}
+
+function Fact({ fact, metric, set, onGo }: { fact: RunFact; metric: MetricKey; set: MetricSet; onGo: (n: number) => void }) {
+  const value = metricValue(fact, metric, set);
   return (
     <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
       <RunLink n={fact.n} onGo={onGo} />
@@ -55,22 +65,22 @@ function Fact({ fact, metric, onGo }: { fact: RunFact; metric: MetricKey; onGo: 
   );
 }
 
-const METRIC_NAME: Record<MetricKey, string> = { val_rmse: "RMSE", val_pearson: "Pearson" };
-
 /** Predicted vs actual on the predicted metric; every number and the colour come from code. */
-function PredictionLine({ p, onGo }: { p: PredictionResult; onGo: (n: number) => void }) {
+function PredictionLine({ p, set, onGo }: { p: PredictionResult; set: MetricSet; onGo: (n: number) => void }) {
+  const spec = specFor(p.metric, set);
+  const name = spec?.label ?? p.metric;
   return (
     <p className="mt-1 text-[13px] leading-relaxed text-pencil">
       <span className="font-hand text-[16px] text-graphite">“{p.quote}”</span>{" "}
       {/* Wraps between phrases on a phone; each number stays with its label. */}
       {p.comparison === "beat_run" && p.target_run ? (
         <span className="whitespace-nowrap">
-          Predicted {METRIC_NAME[p.metric]} to beat <RunLink n={p.target_run} onGo={onGo} />{" "}
+          Predicted {name} to beat <RunLink n={p.target_run} onGo={onGo} />{" "}
           <span className="font-mono text-[12px] text-graphite">{p.predicted.toFixed(3)}</span>;
         </span>
       ) : (
         <span className="whitespace-nowrap">
-          Predicted {METRIC_NAME[p.metric]} {p.comparison}{" "}
+          Predicted {name} {p.comparison}{" "}
           <span className="font-mono text-[12px] text-graphite">{p.predicted}</span>;
         </span>
       )}{" "}
@@ -83,7 +93,7 @@ function PredictionLine({ p, onGo }: { p: PredictionResult; onGo: (n: number) =>
           "font-mono text-[11px] whitespace-nowrap tabular-nums",
           p.better === true ? "text-ballpoint" : p.better === false ? "text-correction" : "text-pencil",
         )}
-        title={p.better ? `Better than predicted (${p.metric === "val_rmse" ? "lower" : "higher"} is better)` : "Worse than predicted"}
+        title={p.better ? `Better than predicted (${spec?.higherIsBetter ? "higher" : "lower"} is better)` : "Worse than predicted"}
       >
         {p.delta > 0 ? "+" : p.delta < 0 ? "−" : "±"}
         {Math.abs(p.delta).toFixed(3)} vs prediction
@@ -114,8 +124,11 @@ export function InsightsPanel({
   onRegenerate,
   onGoToRun,
   canWrite,
+  metrics,
 }: {
   saved: SavedInsights | null;
+  /** The journal's metrics; saved insights carry their own, which win. */
+  metrics: MetricSet;
   status: InsightsStatus;
   entryCount: number;
   loadError: string | null;
@@ -126,6 +139,7 @@ export function InsightsPanel({
 }) {
   const updating = status.kind === "updating";
   const body = saved?.insights;
+  const set = body?.metrics ?? metrics;
   const stale = canWrite && !!saved && !updating && saved.entry_count < entryCount;
 
   // Keep the panel to about one screen: every lever, regression and no-effect, but only the
@@ -199,7 +213,7 @@ export function InsightsPanel({
               {visible.map((x, i) => {
                 const actual = x.facts.at(-1);
                 // Older saved insights have no metric field; they were all val_rmse.
-                const metric: MetricKey = x.metric ?? x.comparison?.metric ?? "val_rmse";
+                const metric: MetricKey = x.metric ?? x.comparison?.metric ?? (body?.metrics ? set.primary.key : "val_rmse");
                 return (
                   <li key={i} className="grid gap-x-4 gap-y-1.5 py-3 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
                     <span
@@ -213,13 +227,13 @@ export function InsightsPanel({
                     <div className="min-w-0">
                       <p className="text-[15px] leading-snug">{x.text}</p>
                       {x.prediction ? (
-                        <PredictionLine p={x.prediction} onGo={onGoToRun} />
+                        <PredictionLine p={x.prediction} set={set} onGo={onGoToRun} />
                       ) : x.type === "prediction_check" && x.predicted && actual && (
                         <p className="mt-1 text-[13px] text-pencil">
                           You predicted <span className="font-hand text-[16px] text-graphite">“{x.predicted}”</span>; W&B
                           logged{" "}
                           <span className="font-mono text-[12px] text-graphite">
-                            {metricValue(actual, metric)?.toFixed(3) ?? "—"}
+                            {metricValue(actual, metric, set)?.toFixed(3) ?? "—"}
                           </span>{" "}
                           {metric} on run {actual.n}.
                         </p>
@@ -231,7 +245,7 @@ export function InsightsPanel({
                           </span>
                         )}
                         {x.facts.map((f) => (
-                          <Fact key={f.n} fact={f} metric={metric} onGo={onGoToRun} />
+                          <Fact key={f.n} fact={f} metric={metric} set={set} onGo={onGoToRun} />
                         ))}
                         {x.comparison && <ComparisonChip c={x.comparison} />}
                         {x.recovery && (

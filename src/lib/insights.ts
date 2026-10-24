@@ -3,9 +3,11 @@ import { createHash } from "crypto";
 import { configChanges, EntryError, findLeakedNumber, generate, spokenNumbersToDigits } from "@/lib/entry-writer";
 import type { ConfigChange } from "@/lib/entry-schema";
 import { describeChange } from "@/lib/config-words";
-import { formatIst, num, PEARSON, RMSE } from "@/lib/ledger";
+import type { JournalContext } from "@/lib/context";
+import { formatIst, num } from "@/lib/ledger";
+import { AROUND_REL, improved, NOISE_REL, REGRESSION_REL, type MetricSet, type MetricSpec } from "@/lib/metrics";
 import { db, DbError, getEntryRows, type EntryRow } from "@/lib/supabase";
-import { fetchRuns, WANDB_PROJECT, type Run } from "@/lib/wandb";
+import { fetchRuns, type Run } from "@/lib/wandb";
 import {
   HEADLINE_MAX_WORDS,
   InsightsWriteSchema,
@@ -15,29 +17,17 @@ import {
   type Insight,
   type InsightsBody,
   type InsightsWrite,
-  type MetricKey,
+  type MetricRole,
   type PredictionResult,
   type RunFact,
   type SavedInsights,
 } from "@/lib/insights-schema";
 
-/**
- * Smallest val_rmse move that counts as real. Folds on this dataset differ by about 0.03,
- * so a run within 0.01 of the best so far is treated as no different from it.
- */
-const NOISE_RMSE = 0.01;
-
-/** A run more than this much worse than the best val_rmse so far is a regression. */
-const REGRESSION_RMSE = 0.1;
-
-/** How close counts as "around" for a predicted value. */
-const AROUND: Record<MetricKey, number> = { val_rmse: 0.02, val_pearson: 0.03 };
-
 /** Caps so a long journal keeps the panel readable; the newest facts win. */
 const MAX_PER_TYPE = 4;
 
 /** Bump when the extraction rules change, so cached extractions are redone. */
-const EXTRACTION_VERSION = "v2";
+const EXTRACTION_VERSION = "v3";
 
 type Row = { run: Run; n: number; entry: EntryRow | null };
 
@@ -73,11 +63,11 @@ type PredictionFact = { id: string; type: "prediction_check"; result: Prediction
 type ScoreFact = LeverFact | NoEffectFact | RegressionFact;
 type Fact = ScoreFact | PredictionFact;
 
-function metricOf(row: Row, metric: MetricKey): number | null {
-  return num(row.run.summary[metric]);
+function valueOf(row: Row, spec: MetricSpec): number | null {
+  return num(row.run.summary[spec.key]);
 }
 
-/** A readable phrase for one config change, e.g. "added text features", "set alpha to 100". */
+/** A readable phrase for one config change, e.g. "adding text features", "setting alpha to 100". */
 function formatChange(c: ConfigChange): string {
   return describeChange(c);
 }
@@ -87,24 +77,30 @@ function describeChanges(from: Run, to: Run): string[] {
 }
 
 /**
- * Walks the runs in order, tracking the best val_rmse so far. Compared with that best:
- * more than NOISE_RMSE better is a lever, within NOISE_RMSE is no-effect, and more than
- * REGRESSION_RMSE worse is a regression. Climbing back after a bad run is never a lever.
+ * Walks the runs in order, tracking the best main-metric value so far. Compared with that best,
+ * with noise = NOISE_REL x |best| and regression = REGRESSION_REL x |best|: better by more than
+ * noise is a lever, within noise is no-effect, worse by more than the regression threshold is a
+ * regression. Climbing back after a bad run is never a lever.
  */
-function scoreFacts(rows: Row[]): ScoreFact[] {
+function scoreFacts(rows: Row[], primary: MetricSpec): ScoreFact[] {
   const facts: ScoreFact[] = [];
+  // Positive gain = better, whichever direction the metric goes.
+  const gain = (v: number, bestV: number) => (primary.higherIsBetter ? v - bestV : bestV - v);
   let best: Row | null = null;
   rows.forEach((row, i) => {
-    const v = metricOf(row, "val_rmse");
+    const v = valueOf(row, primary);
     if (v === null) return;
     if (best) {
-      const bestV = metricOf(best, "val_rmse")!;
+      const bestV = valueOf(best, primary)!;
+      const noise = NOISE_REL * Math.abs(bestV);
+      const regression = REGRESSION_REL * Math.abs(bestV);
       const delta = v - bestV;
+      const g = gain(v, bestV);
       const vsBest = configChanges(best.run, row.run);
       const changes = vsBest.map(formatChange);
-      if (delta < -NOISE_RMSE) {
+      if (g > noise) {
         facts.push({ id: `lever-${row.n}`, type: "lever", run: row.n, prevBest: best.n, delta, changes });
-      } else if (Math.abs(delta) <= NOISE_RMSE) {
+      } else if (Math.abs(g) <= noise) {
         // What changed in this run itself (vs the run before) is tuning; the rest is the real comparison.
         const prev = rows[i - 1];
         const tunedKeys = new Set(prev ? configChanges(prev.run, row.run).map((c) => c.key) : []);
@@ -121,10 +117,10 @@ function scoreFacts(rows: Row[]): ScoreFact[] {
           main: main.map(formatChange),
           alongside: alongside.map(formatChange),
         });
-      } else if (delta > REGRESSION_RMSE) {
+      } else if (-g > regression) {
         const next = rows[i + 1];
-        const nextV = next ? metricOf(next, "val_rmse") : null;
-        const recovered = next && nextV !== null && nextV <= bestV + NOISE_RMSE;
+        const nextV = next ? valueOf(next, primary) : null;
+        const recovered = next && nextV !== null && gain(nextV, bestV) >= -noise;
         facts.push({
           id: `regression-${row.n}`,
           type: "regression",
@@ -136,31 +132,29 @@ function scoreFacts(rows: Row[]): ScoreFact[] {
         });
       }
     }
-    if (!best || v < metricOf(best, "val_rmse")!) best = row;
+    if (!best || gain(v, valueOf(best, primary)!) > 0) best = row;
   });
   return facts;
 }
 
-const higherIsBetter = (metric: MetricKey) => metric === PEARSON.key;
-
-function held(c: Comparator, actual: number, target: number, metric: MetricKey): boolean {
+function held(c: Comparator, actual: number, target: number, spec: MetricSpec): boolean {
   if (c === "above") return actual > target;
   if (c === "below") return actual < target;
-  if (c === "beat_run") return higherIsBetter(metric) ? actual > target : actual < target;
-  return Math.abs(actual - target) <= AROUND[metric];
+  if (c === "beat_run") return spec.higherIsBetter ? actual > target : actual < target;
+  return Math.abs(actual - target) <= AROUND_REL * Math.abs(target);
 }
 
 /** Which way a prediction points, so two phrasings of the same expectation are recognised as one. */
-function direction(c: Comparator, metric: MetricKey): "up" | "down" | "around" {
+function direction(c: Comparator, spec: MetricSpec): "up" | "down" | "around" {
   if (c === "around") return "around";
-  if (c === "beat_run") return higherIsBetter(metric) ? "up" : "down";
+  if (c === "beat_run") return spec.higherIsBetter ? "up" : "down";
   return c === "above" ? "up" : "down";
 }
 
 type Extracted = {
   run: number;
   about: "this_run" | "next_run";
-  metric: MetricKey;
+  metric: MetricRole;
   comparison: Comparator;
   value: number | null;
   beat_run: number | null;
@@ -181,28 +175,53 @@ function normalizeNumbers(text: string): string {
   );
 }
 
-/** The metric a phrase is about, from its own words; null if it names neither or both. */
-function metricFromWords(text: string): MetricKey | null {
-  const rmse = /\b(rmse|mse|error|loss)\b/i.test(text);
-  const pearson = /\b(pearson|correlation|corr)\b/i.test(text);
-  if (rmse === pearson) return null;
-  return rmse ? "val_rmse" : "val_pearson";
+/** Extra words people use for common metrics. */
+const SYNONYMS: Record<string, string[]> = {
+  rmse: ["rmse", "mse", "error"],
+  mse: ["mse", "error"],
+  mae: ["mae", "error"],
+  loss: ["loss"],
+  pearson: ["pearson", "correlation", "corr"],
+  spearman: ["spearman", "correlation"],
+  accuracy: ["accuracy", "acc"],
+  acc: ["accuracy", "acc"],
+  f1: ["f1"],
+  auc: ["auc"],
+};
+
+/** Words that name a metric, from its W&B key and label: "val_rmse" -> rmse, mse, error. */
+function wordsFor(spec: MetricSpec): string[] {
+  const parts = `${spec.key} ${spec.label}`
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p && !["val", "valid", "validation", "eval", "test", "train", "score", "mean", "avg"].includes(p));
+  return [...new Set(parts.flatMap((p) => SYNONYMS[p] ?? [p]))];
+}
+
+/** Which of the journal's metrics a phrase names; null if neither or both. */
+function metricFromWords(text: string, metrics: MetricSet): MetricRole | null {
+  const has = (spec: MetricSpec | null) =>
+    !!spec && wordsFor(spec).some((w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text));
+  const p = has(metrics.primary);
+  const s = has(metrics.secondary);
+  if (p === s) return null;
+  return p ? "primary" : "secondary";
 }
 
 /**
  * The metric a prediction is about: named in the quote, else in its sentence in the notes.
- * "Score" and "beat run N" mean the primary metric, val_rmse. Null when it can't be told.
+ * "Score" and "beat run N" mean the primary metric. Null when it can't be told.
  */
-function inferMetric(p: Extracted, notes: string): MetricKey | null {
+function inferMetric(p: Extracted, notes: string, metrics: MetricSet): MetricRole | null {
   const quote = normalizeNumbers(p.quote);
-  const fromQuote = metricFromWords(quote);
+  const fromQuote = metricFromWords(quote, metrics);
   if (fromQuote) return fromQuote;
   const key = quote.toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
   const sentence =
     notes.split(/(?<=[.!?])\s+/).find((s) => s.toLowerCase().replace(/[^a-z0-9.]+/g, " ").includes(key)) ?? "";
-  const fromSentence = metricFromWords(sentence);
+  const fromSentence = metricFromWords(sentence, metrics);
   if (fromSentence) return fromSentence;
-  if (p.comparison === "beat_run" || /\bscore\b/i.test(`${quote} ${sentence}`)) return "val_rmse";
+  if (p.comparison === "beat_run" || /\bscore\b/i.test(`${quote} ${sentence}`)) return "primary";
   return null;
 }
 
@@ -212,7 +231,7 @@ function inferMetric(p: Extracted, notes: string): MetricKey | null {
  * insights. The value (or the run to beat) must appear in the notes, and a later restatement
  * of the same expectation for the same run ("I said it should drop below run four") is dropped.
  */
-function predictionFacts(rows: Row[], extracted: Extracted[]): PredictionFact[] {
+function predictionFacts(rows: Row[], extracted: Extracted[], metrics: MetricSet): PredictionFact[] {
   const seen = new Set<string>();
   const facts: PredictionFact[] = [];
   const order = (p: Extracted) => p.run * 2 + (p.about === "this_run" ? 0 : 1);
@@ -232,31 +251,32 @@ function predictionFacts(rows: Row[], extracted: Extracted[]): PredictionFact[] 
       target = p.value;
     }
 
-    const metric = inferMetric(p, notes);
-    if (!metric) continue;
-    if (p.comparison === "beat_run") target = metricOf(rows[p.beat_run! - 1], metric);
+    const role = inferMetric(p, notes, metrics);
+    const spec = role === "secondary" ? metrics.secondary : role === "primary" ? metrics.primary : null;
+    if (!spec) continue;
+    if (p.comparison === "beat_run") target = valueOf(rows[p.beat_run! - 1], spec);
     if (target === null) continue;
 
-    const key = `${tested.n}|${metric}|${direction(p.comparison, metric)}`;
+    const key = `${tested.n}|${spec.key}|${direction(p.comparison, spec)}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const actual = metricOf(tested, metric);
-    if (actual === null || held(p.comparison, actual, target, metric)) continue;
+    const actual = valueOf(tested, spec);
+    if (actual === null || held(p.comparison, actual, target, spec)) continue;
     const delta = actual - target;
     facts.push({
-      id: `prediction-${p.run}-${tested.n}-${metric}`,
+      id: `prediction-${p.run}-${tested.n}-${spec.key}`,
       type: "prediction_check",
       result: {
         source_run: p.run,
         tested_run: tested.n,
-        metric,
+        metric: spec.key,
         comparison: p.comparison,
         predicted: target,
         ...(p.comparison === "beat_run" ? { target_run: p.beat_run! } : {}),
         actual,
         delta,
-        better: delta === 0 ? null : higherIsBetter(metric) ? delta > 0 : delta < 0,
+        better: improved(spec, delta),
         quote: p.quote,
       },
     });
@@ -265,6 +285,12 @@ function predictionFacts(rows: Row[], extracted: Extracted[]): PredictionFact[] 
 }
 
 /* ---------- Step 2: prediction extraction (Gemini, cached per notes) ---------- */
+
+function describeMetrics(metrics: MetricSet): string {
+  const line = (role: string, spec: MetricSpec) =>
+    `- ${role}: ${spec.key} ("${spec.label}", ${spec.higherIsBetter ? "higher" : "lower"} is better). Also called: ${wordsFor(spec).join(", ")}.`;
+  return [line("primary", metrics.primary), metrics.secondary ? line("secondary", metrics.secondary) : "- secondary: none"].join("\n");
+}
 
 const EXTRACT_SYSTEM = `You extract predictions from an ML researcher's spoken notes. You do not judge them.
 
@@ -275,40 +301,45 @@ Each block is one run's notes, dictated after that run finished. Extract every p
 
 Fields:
 - about: this_run if it was the expectation for the run these notes describe ("I expected this to..."); next_run if it's about the next experiment.
-- metric: val_rmse for RMSE, error, loss or "the score"; val_pearson for Pearson or correlation.
+- metric: primary or secondary, using METRICS below. "The score" means primary.
 - comparison: above, below, around ("about", "roughly", "maybe X" count as around), or beat_run for beating another run.
 - value: the number in digits ("zero point six seven" -> 0.67); null for beat_run.
 - beat_run: the run number to beat ("run four" -> 4); null otherwise.
 - quote: the words of the prediction, copied from the notes.
 
-Skip results being reported ("RMSE was 0.70"), predictions with no number and no run to beat, and restatements of a prediction made in an earlier run's notes ("I said that..., and it didn't", "I predicted Pearson above 0.6 so..."). Return an empty list if there are none.`;
+Skip results being reported ("RMSE was 0.70"), predictions with no number and no run to beat, predictions about a metric not in METRICS, and restatements of a prediction made in an earlier run's notes ("I said that..., and it didn't", "I predicted Pearson above 0.6 so..."). Return an empty list if there are none.`;
 
-function hashNotes(notes: string): string {
-  return createHash("sha1").update(`${EXTRACTION_VERSION}:${notes}`).digest("hex").slice(0, 16);
+function hashNotes(notes: string, metrics: MetricSet): string {
+  const metricKey = `${metrics.primary.key}|${metrics.secondary?.key ?? ""}`;
+  return createHash("sha1").update(`${EXTRACTION_VERSION}:${metricKey}:${notes}`).digest("hex").slice(0, 16);
 }
 
 async function extractPredictions(
   rows: Row[],
   cache: ExtractionCache,
+  ctx: JournalContext,
 ): Promise<{ extracted: Extracted[]; cache: ExtractionCache }> {
   const next: ExtractionCache = {};
   const todo: Row[] = [];
   for (const row of rows) {
     if (!row.entry) continue;
-    const hash = hashNotes(row.entry.raw_notes);
+    const hash = hashNotes(row.entry.raw_notes, ctx.metrics);
     const hit = cache[row.run.id];
     if (hit && hit.notes_hash === hash) next[row.run.id] = hit;
     else todo.push(row);
   }
 
   if (todo.length) {
-    const prompt = todo.map((r) => `RUN ${r.n} NOTES\n"""\n${r.entry!.raw_notes}\n"""`).join("\n\n");
+    const prompt = `METRICS\n${describeMetrics(ctx.metrics)}\n\n${todo
+      .map((r) => `RUN ${r.n} NOTES\n"""\n${r.entry!.raw_notes}\n"""`)
+      .join("\n\n")}`;
     const { value } = await generate(PredictionExtractSchema, EXTRACT_SYSTEM, prompt, "Regenerate", () => null, {
       temperature: 0,
+      geminiKey: ctx.geminiKey,
     });
     for (const row of todo) {
       next[row.run.id] = {
-        notes_hash: hashNotes(row.entry!.raw_notes),
+        notes_hash: hashNotes(row.entry!.raw_notes, ctx.metrics),
         items: value.predictions.filter((p) => p.run === row.n),
       };
     }
@@ -345,16 +376,17 @@ function runLabel(rows: Row[], n: number): string {
   return row.entry?.entry.title ? `run ${n} ("${row.entry.entry.title}")` : `run ${n} (${row.run.name})`;
 }
 
-const METRIC_WORD: Record<MetricKey, string> = { val_rmse: "RMSE", val_pearson: "Pearson" };
-
-/** The prediction in words; for beat_run the target is named by run, so no W&B number appears. */
-function predictionWords(r: PredictionResult): string {
-  return r.comparison === "beat_run"
-    ? `${METRIC_WORD[r.metric]} better than run ${r.target_run}`
-    : `${METRIC_WORD[r.metric]} ${r.comparison} ${r.predicted}`;
+function labelOf(metrics: MetricSet, key: string): string {
+  return metrics.primary.key === key ? metrics.primary.label : metrics.secondary?.key === key ? metrics.secondary.label : key;
 }
 
-function factForModel(rows: Row[], f: Fact) {
+/** The prediction in words; for beat_run the target is named by run, so no W&B number appears. */
+function predictionWords(r: PredictionResult, metrics: MetricSet): string {
+  const name = labelOf(metrics, r.metric);
+  return r.comparison === "beat_run" ? `${name} better than run ${r.target_run}` : `${name} ${r.comparison} ${r.predicted}`;
+}
+
+function factForModel(rows: Row[], f: Fact, metrics: MetricSet) {
   if (f.type === "lever") {
     return { id: f.id, type: f.type, run: runLabel(rows, f.run), previous_best: runLabel(rows, f.prevBest), changed_vs_previous_best: f.changes };
   }
@@ -388,7 +420,7 @@ function factForModel(rows: Row[], f: Fact) {
     type: f.type,
     predicted_in: runLabel(rows, r.source_run),
     tested_by: runLabel(rows, r.tested_run),
-    prediction: predictionWords(r),
+    prediction: predictionWords(r, metrics),
     change_tested: before ? describeChanges(before.run, testedRow.run) : [],
     outcome:
       r.comparison === "beat_run"
@@ -409,7 +441,7 @@ function plain(changes: string[]): string {
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Plain sentence from the fact alone, used when the model leaves one out. */
-function templateSentence(rows: Row[], f: Fact): string {
+function templateSentence(f: Fact, metrics: MetricSet): string {
   if (f.type === "lever") {
     return `Run ${f.run} set a new best over run ${f.prevBest} by ${plain(f.changes)}.`;
   }
@@ -423,7 +455,7 @@ function templateSentence(rows: Row[], f: Fact): string {
   }
   const r = f.result;
   const outcome = r.comparison === "beat_run" ? "it didn't" : `run ${r.tested_run} came in ${r.actual > r.predicted ? "above" : "below"} it`;
-  return `Run ${r.source_run}'s notes predicted ${predictionWords(r)}; ${outcome}.`;
+  return `Run ${r.source_run}'s notes predicted ${predictionWords(r, metrics)}; ${outcome}.`;
 }
 
 /** "Run N set a new best: description", built from the headline fact alone. */
@@ -442,12 +474,18 @@ function wordCount(s: string): number {
 
 /* ---------- Assembly ---------- */
 
-function runFact(rows: Row[], n: number): RunFact {
+function runFact(rows: Row[], n: number, metrics: MetricSet): RunFact {
   const row = rows[n - 1];
-  return { n, id: row.run.id, name: row.run.name, rmse: num(row.run.summary[RMSE.key]), pearson: num(row.run.summary[PEARSON.key]) };
+  return {
+    n,
+    id: row.run.id,
+    name: row.run.name,
+    primary: valueOf(row, metrics.primary),
+    secondary: metrics.secondary ? valueOf(row, metrics.secondary) : null,
+  };
 }
 
-function toInsight(rows: Row[], f: Fact, text: string): Insight {
+function toInsight(rows: Row[], f: Fact, text: string, metrics: MetricSet): Insight {
   if (f.type === "prediction_check") {
     const r = f.result;
     const runs = [...new Set([r.source_run, r.target_run, r.tested_run].filter((n): n is number => n !== undefined))].sort(
@@ -459,11 +497,12 @@ function toInsight(rows: Row[], f: Fact, text: string): Insight {
       text,
       runs,
       metric: r.metric,
-      facts: runs.map((n) => runFact(rows, n)),
+      facts: runs.map((n) => runFact(rows, n, metrics)),
       comparison: null,
       prediction: r,
     };
   }
+  const key = metrics.primary.key;
   const from = f.type === "lever" ? f.prevBest : f.best;
   const runs = [from, f.run, ...(f.type === "regression" && f.recovery ? [f.recovery.run] : [])];
   return {
@@ -471,19 +510,19 @@ function toInsight(rows: Row[], f: Fact, text: string): Insight {
     type: f.type,
     text,
     runs,
-    metric: "val_rmse",
-    facts: runs.map((n) => runFact(rows, n)),
+    metric: key,
+    facts: runs.map((n) => runFact(rows, n, metrics)),
     // No-effect is within noise by definition, so it's neither better nor worse: grey.
     comparison: {
       from,
       to: f.run,
       delta: f.delta,
-      metric: "val_rmse",
-      improved: f.type === "no_effect" || f.delta === 0 ? null : f.delta < 0,
+      metric: key,
+      improved: f.type === "no_effect" ? null : improved(metrics.primary, f.delta),
     },
     recovery:
       f.type === "regression" && f.recovery
-        ? { from, to: f.recovery.run, delta: f.recovery.delta, metric: "val_rmse", improved: null }
+        ? { from, to: f.recovery.run, delta: f.recovery.delta, metric: key, improved: null }
         : null,
   };
 }
@@ -494,10 +533,12 @@ function newest<T extends Fact>(facts: T[], runOf: (f: T) => number): T[] {
 
 /** Builds insights without saving them. `cache` is the previous version's prediction extractions. */
 export async function buildInsights(
+  ctx: JournalContext,
   triggerRunId?: string,
   cache: ExtractionCache = {},
 ): Promise<{ body: InsightsBody; afterRun: number; entryCount: number }> {
-  const [runs, entryRows] = await Promise.all([fetchRuns(), getEntryRows()]);
+  const { metrics } = ctx;
+  const [runs, entryRows] = await Promise.all([fetchRuns(ctx.source), getEntryRows(ctx.workspace)]);
   const byRun = new Map(entryRows.map((e) => [e.run_id, e]));
   const rows: Row[] = [...runs]
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -506,10 +547,10 @@ export async function buildInsights(
   if (logged.length === 0) throw new EntryError("Write an entry first; insights are built from your entries.", 400);
 
   // 1. Facts, in code.
-  const scored = scoreFacts(rows);
-  const { extracted, cache: extractions } = await extractPredictions(rows, cache);
+  const scored = scoreFacts(rows, metrics.primary);
+  const { extracted, cache: extractions } = await extractPredictions(rows, cache, ctx);
   const levers = newest(scored.filter((f): f is LeverFact => f.type === "lever"), (f) => f.run);
-  const predictions = newest(predictionFacts(rows, extracted), (f) => f.result.tested_run);
+  const predictions = newest(predictionFacts(rows, extracted, metrics), (f) => f.result.tested_run);
   const regressions = newest(scored.filter((f): f is RegressionFact => f.type === "regression"), (f) => f.run);
   const noEffects = newest(scored.filter((f): f is NoEffectFact => f.type === "no_effect"), (f) => f.run);
   const facts: Fact[] = [...levers, ...regressions, ...predictions, ...noEffects];
@@ -517,21 +558,26 @@ export async function buildInsights(
   // The headline is about the most important fact: the latest new best, else the latest regression,
   // else the latest missed prediction.
   const headlineFact = levers[0] ?? regressions[0] ?? predictions[0] ?? noEffects[0] ?? null;
-  const bestRun = rows.reduce<Row | null>((b, r) => {
-    const v = metricOf(r, "val_rmse");
-    return v !== null && (!b || v < metricOf(b, "val_rmse")!) ? r : b;
-  }, null)?.n ?? null;
+  const better = (a: number, b: number) => (metrics.primary.higherIsBetter ? a > b : a < b);
+  const bestRun =
+    rows.reduce<Row | null>((b, r) => {
+      const v = valueOf(r, metrics.primary);
+      return v !== null && (!b || better(v, valueOf(b, metrics.primary)!)) ? r : b;
+    }, null)?.n ?? null;
 
   // 2. Words, from Gemini, for exactly these facts.
   const ids = facts.map((f) => f.id);
   const latest = logged[logged.length - 1];
-  const prompt = `FACTS\n${JSON.stringify(facts.map((f) => factForModel(rows, f)), null, 1)}
+  const prompt = `FACTS\n${JSON.stringify(facts.map((f) => factForModel(rows, f, metrics)), null, 1)}
 
 HEADLINE FACT: ${headlineFact ? headlineFact.id : "none; say which run is best so far"}
 
 LATEST NEXT STEPS (from run ${latest.n}'s entry): ${JSON.stringify(latest.entry!.entry.next_steps)}`;
 
-  const wandbNumbers = rows.flatMap((r) => [metricOf(r, "val_rmse"), metricOf(r, "val_pearson")]);
+  const wandbNumbers: (number | null)[] = rows.flatMap((r) => [
+    valueOf(r, metrics.primary),
+    metrics.secondary ? valueOf(r, metrics.secondary) : null,
+  ]);
   for (const f of [...levers, ...regressions, ...noEffects]) wandbNumbers.push(f.delta);
   for (const f of regressions) if (f.recovery) wandbNumbers.push(f.recovery.delta);
 
@@ -571,14 +617,14 @@ LATEST NEXT STEPS (from run ${latest.n}'s entry): ${JSON.stringify(latest.entry!
       if (leak) problems.push(`Remove the metric value ${leak}; the app shows the numbers.`);
       return problems.length ? problems.join("\n") : null;
     },
-    { temperature: 0 },
+    { temperature: 0, geminiKey: ctx.geminiKey },
   );
 
   // 3. Enforce the shape whatever came back: one sentence per fact, template if missing or leaking.
   const textById = new Map(words.sentences.filter((s) => ids.includes(s.id)).map((s) => [s.id, s.text]));
   const insights = facts.map((f) => {
     const text = textById.get(f.id);
-    return toInsight(rows, f, text && !leakIn(f.id, text) ? text : templateSentence(rows, f));
+    return toInsight(rows, f, text && !leakIn(f.id, text) ? text : templateSentence(f, metrics), metrics);
   });
   const headlineOk = wordCount(words.headline) <= HEADLINE_MAX_WORDS && !findLeakedNumber(words.headline, wandbNumbers);
 
@@ -590,6 +636,7 @@ LATEST NEXT STEPS (from run ${latest.n}'s entry): ${JSON.stringify(latest.entry!
       insights,
       next_experiment: words.next_experiment,
       model,
+      metrics,
       extractions,
     },
     afterRun: triggerN ?? Math.max(...logged.map((r) => r.n)),
@@ -600,52 +647,57 @@ LATEST NEXT STEPS (from run ${latest.n}'s entry): ${JSON.stringify(latest.entry!
 /* ---------- Storage ---------- */
 
 function explain(message: string): string {
-  return /relation .*insights.* does not exist|Could not find the table/i.test(message)
-    ? "The insights table doesn't exist yet. Run supabase/003_insights.sql in the Supabase SQL editor."
-    : `Supabase error: ${message}`;
+  if (/relation .*insights.* does not exist|Could not find the table/i.test(message)) {
+    return "The insights table doesn't exist yet. Run supabase/003_insights.sql in the Supabase SQL editor.";
+  }
+  if (/workspace/i.test(message)) {
+    return "The database isn't set up for workspaces yet. Run supabase/005_workspaces.sql in the Supabase SQL editor.";
+  }
+  return `Supabase error: ${message}`;
 }
 
-function toSaved(row: {
-  id: string;
-  insights: InsightsBody;
-  after_run: number | null;
-  entry_count: number;
-  created_at: string;
-}): SavedInsights {
+type InsightsRow = { id: string; insights: InsightsBody; after_run: number | null; entry_count: number; created_at: string };
+
+function toSaved(row: InsightsRow): SavedInsights {
   // The extraction cache is server-side bookkeeping; don't ship it to the browser.
   const { extractions: _cache, ...insights } = row.insights;
   void _cache;
   return { ...row, insights, created_label: formatIst(row.created_at) };
 }
 
-async function latestRow() {
+/** Which saved insights to read: a journal (workspace) and its W&B project. */
+export type InsightsScope = { workspace: string; project: string };
+
+async function latestRow(scope: InsightsScope): Promise<InsightsRow | null> {
   const { data, error } = await db()
     .from("insights")
     .select("id, insights, after_run, entry_count, created_at")
-    .eq("project", WANDB_PROJECT)
+    .eq("workspace", scope.workspace)
+    .eq("project", scope.project)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw new DbError(explain(error.message));
-  return data as { id: string; insights: InsightsBody; after_run: number | null; entry_count: number; created_at: string } | null;
+  return data as InsightsRow | null;
 }
 
-export async function getLatestInsights(): Promise<SavedInsights | null> {
-  const row = await latestRow();
+export async function getLatestInsights(scope: InsightsScope): Promise<SavedInsights | null> {
+  const row = await latestRow(scope);
   return row ? toSaved(row) : null;
 }
 
 /**
- * Rebuilds insights from every W&B run and every saved entry, saves a new version,
- * and returns it. `triggerRunId` is the run whose entry was just written or fixed.
+ * Rebuilds insights from every W&B run and every saved entry in the journal, saves a new
+ * version, and returns it. `triggerRunId` is the run whose entry was just written or fixed.
  */
-export async function regenerateInsights(triggerRunId?: string): Promise<SavedInsights> {
-  const previous = await latestRow();
-  const built = await buildInsights(triggerRunId, previous?.insights.extractions ?? {});
+export async function regenerateInsights(ctx: JournalContext, triggerRunId?: string): Promise<SavedInsights> {
+  const previous = await latestRow({ workspace: ctx.workspace, project: ctx.source.project });
+  const built = await buildInsights(ctx, triggerRunId, previous?.insights.extractions ?? {});
   const { data, error } = await db()
     .from("insights")
     .insert({
-      project: WANDB_PROJECT,
+      workspace: ctx.workspace,
+      project: ctx.source.project,
       insights: built.body,
       after_run: built.afterRun,
       trigger_run_id: triggerRunId ?? null,
@@ -654,5 +706,5 @@ export async function regenerateInsights(triggerRunId?: string): Promise<SavedIn
     .select("id, insights, after_run, entry_count, created_at")
     .single();
   if (error) throw new DbError(explain(error.message));
-  return toSaved(data);
+  return toSaved(data as InsightsRow);
 }

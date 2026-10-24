@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { LedgerRow } from "@/lib/ledger";
 import type { SavedEntry } from "@/lib/entry-schema";
 import type { SavedInsights } from "@/lib/insights-schema";
+import type { MetricSet } from "@/lib/metrics";
+import { useApiFetch } from "@/components/api-context";
 import { InsightsPanel, type InsightsStatus } from "@/components/insights-panel";
 import { RunsTable } from "@/components/runs-table";
 
@@ -18,8 +20,10 @@ export function JournalView({
   insights: initialInsights,
   insightsError,
   canWrite,
+  metrics,
 }: {
   canWrite: boolean;
+  metrics: MetricSet;
   rows: LedgerRow[];
   entries: Record<string, SavedEntry>;
   insights: SavedInsights | null;
@@ -32,6 +36,7 @@ export function JournalView({
   const [flashId, setFlashId] = useState<string | null>(null);
   const poll = useRef<ReturnType<typeof setTimeout> | null>(null);
   const insightsRef = useRef(insights);
+  const apiFetch = useApiFetch();
 
   useEffect(() => {
     insightsRef.current = insights;
@@ -50,7 +55,7 @@ export function JournalView({
 
     const tick = async () => {
       try {
-        const res = await fetch("/api/insights", { cache: "no-store" });
+        const res = await apiFetch("/api/insights", { cache: "no-store" });
         const body = await res.json();
         if (res.ok && body.insights && body.insights.id !== baselineId) {
           setInsights(body.insights);
@@ -73,7 +78,7 @@ export function JournalView({
     if (poll.current) clearTimeout(poll.current);
     setStatus({ kind: "updating", afterRun: null });
     try {
-      const res = await fetch("/api/insights", { method: "POST" });
+      const res = await apiFetch("/api/insights", { method: "POST" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
       setInsights(body.insights);
@@ -105,6 +110,7 @@ export function JournalView({
         onRegenerate={regenerate}
         onGoToRun={goToRun}
         canWrite={canWrite}
+        metrics={metrics}
       />
       <RunsTable
         rows={rows}
@@ -113,6 +119,7 @@ export function JournalView({
         onOpenChange={setOpen}
         flashId={flashId}
         canWrite={canWrite}
+        metrics={metrics}
         onEntryChanged={(runId) => {
           setLoggedIds((prev) => (prev.has(runId) ? prev : new Set(prev).add(runId)));
           if (!insightsError) watchForRebuild(numberOf.get(runId) ?? null);

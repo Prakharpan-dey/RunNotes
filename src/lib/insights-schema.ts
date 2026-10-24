@@ -1,9 +1,13 @@
 import { z } from "zod";
+import type { MetricSet } from "@/lib/metrics";
 
 export const INSIGHT_TYPES = ["lever", "no_effect", "regression", "prediction_check"] as const;
 export type InsightType = (typeof INSIGHT_TYPES)[number];
-export const METRIC_KEYS = ["val_rmse", "val_pearson"] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
+/** A W&B summary key, e.g. "val_rmse". */
+export type MetricKey = string;
+/** Which of the journal's metrics a prediction is about. */
+export const METRIC_ROLES = ["primary", "secondary"] as const;
+export type MetricRole = (typeof METRIC_ROLES)[number];
 /** "beat_run" means beating another run's score on the metric; its value comes from W&B. */
 export const COMPARATORS = ["above", "below", "around", "beat_run"] as const;
 export type Comparator = (typeof COMPARATORS)[number];
@@ -21,7 +25,7 @@ export const PredictionExtractSchema = z.object({
         about: z
           .enum(["this_run", "next_run"])
           .describe("this_run if it was an expectation for the run these notes are about; next_run if it's about the next experiment"),
-        metric: z.enum(METRIC_KEYS).describe("val_rmse for RMSE/error/loss/score, val_pearson for Pearson/correlation"),
+        metric: z.enum(METRIC_ROLES).describe("primary or secondary: which metric from METRICS the prediction is about"),
         comparison: z.enum(COMPARATORS).describe("above, below or around a value, or beat_run to beat another run's score"),
         value: z.number().nullable().describe("The predicted value as a number, e.g. 0.6 for 'zero point six'. null for beat_run"),
         beat_run: z.int().min(1).nullable().describe("For beat_run: the run number to beat, e.g. 4 for 'beat run four'. Otherwise null"),
@@ -52,8 +56,11 @@ export type RunFact = {
   n: number;
   id: string;
   name: string;
-  rmse: number | null;
-  pearson: number | null;
+  primary?: number | null;
+  secondary?: number | null;
+  /** Insights saved before metrics were configurable. */
+  rmse?: number | null;
+  pearson?: number | null;
 };
 
 /**
@@ -62,7 +69,7 @@ export type RunFact = {
  */
 export type Comparison = { from: number; to: number; delta: number; metric?: MetricKey; improved?: boolean | null };
 
-/** A prediction from the notes, checked against the next run's W&B value. */
+/** A prediction from the notes, checked against a run's W&B value. */
 export type PredictionResult = {
   source_run: number;
   tested_run: number;
@@ -75,13 +82,13 @@ export type PredictionResult = {
   actual: number;
   /** actual - predicted */
   delta: number;
-  /** Whether the actual result was better than predicted (lower RMSE, higher Pearson). Drives the colour. */
+  /** Whether the actual result was better than predicted, given the metric's direction. Drives the colour. */
   better: boolean | null;
   quote: string;
 };
 
 export type Insight = {
-  /** Stable id from the facts, e.g. "lever-4", "prediction-3-val_pearson". */
+  /** Stable id from the facts, e.g. "lever-4", "prediction-3-4-val_pearson". */
   id?: string;
   type: InsightType;
   text: string;
@@ -104,6 +111,8 @@ export type InsightsBody = {
   insights: Insight[];
   next_experiment: InsightsWrite["next_experiment"];
   model: string;
+  /** The metrics these insights were computed with, for labels and colours in the panel. */
+  metrics?: MetricSet;
   /** True when the headline is the code template because the model's was too long. */
   headline_from_template?: boolean;
   extractions?: ExtractionCache;

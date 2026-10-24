@@ -1,7 +1,9 @@
 import "server-only";
-import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
-import { num, PEARSON, RMSE, type MetricSpec } from "@/lib/ledger";
+import { num } from "@/lib/ledger";
+import { improved, metricList, type MetricSet, type MetricSpec } from "@/lib/metrics";
+import { callModel } from "@/lib/llm";
+import { EntryError } from "@/lib/errors";
 import type { Run } from "@/lib/wandb";
 import {
   EntryDraftSchema,
@@ -12,25 +14,11 @@ import {
   type MetricResult,
 } from "@/lib/entry-schema";
 
-/**
- * Tried in order. On the free tier each model has its own daily quota (20 requests for
- * gemini-3.5-flash), so falling back keeps RunNotes working when the first runs out.
- * Override with GEMINI_MODELS=a,b,c (or GEMINI_MODEL=a for a single model).
- */
-export const MODELS = (process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || "gemini-3.5-flash,gemini-3.5-flash-lite")
-  .split(",")
-  .map((m) => m.trim())
-  .filter(Boolean);
-const METRICS: MetricSpec[] = [RMSE, PEARSON];
+export { EntryError } from "@/lib/errors";
+export { MODELS } from "@/lib/llm";
 
-export class EntryError extends Error {
-  constructor(
-    message: string,
-    public status = 502,
-  ) {
-    super(message);
-  }
-}
+/** What a call needs beyond its inputs: the journal's metrics and, for visitors, their own Gemini key. */
+export type WriteOptions = { metrics: MetricSet; geminiKey: string | null };
 
 const SYSTEM = `You turn an ML researcher's spoken notes about one training run into a short lab-notebook entry.
 
@@ -38,7 +26,7 @@ The notes were dictated with voice typing. Expect filler words (um, uh, like, so
 
 Rules:
 - Use only what the notes and the run data say. Do not invent hypotheses, observations or plans the person didn't express.
-- Never write metric values or metric changes (scores, RMSE, Pearson, percentages, deltas) in any field. The app shows the real numbers from W&B next to your entry. You may say a metric improved, got worse or stayed flat, using METRIC DIRECTIONS.
+- Never write metric values or metric changes (scores, percentages, deltas) in any field. The app shows the real numbers from W&B next to your entry. You may say a metric improved, got worse or stayed flat, using METRIC DIRECTIONS.
 - changes: start from CONFIG CHANGES, formatted "key: old -> new". Add any other change the person mentions that isn't in the config (code, data, preprocessing). If there is no previous run, list the main setup choices instead.
 - If the notes contradict the config about what changed, trust the config and add an observation pointing out the mismatch.
 - verdict: "keep" if the person wants to build on this run, "discard" if they'd drop it, "inconclusive" if they say it's unclear. If they don't say, use METRIC DIRECTIONS: primary metric improved -> keep, got worse -> discard, mixed or no previous run -> inconclusive.
@@ -58,21 +46,22 @@ export function configChanges(prev: Run | null, run: Run): ConfigChange[] {
   return changes;
 }
 
-function metricResults(prev: Run | null, run: Run): MetricResult[] {
-  return METRICS.map(({ key, higherIsBetter }) => {
-    const value = num(run.summary[key]);
-    const prevValue = prev ? num(prev.summary[key]) : null;
-    if (value === null || prevValue === null) return { key, value, prev: prevValue, delta: null, improved: null };
+function metricResults(prev: Run | null, run: Run, specs: MetricSpec[]): MetricResult[] {
+  return specs.map((spec) => {
+    const value = num(run.summary[spec.key]);
+    const prevValue = prev ? num(prev.summary[spec.key]) : null;
+    if (value === null || prevValue === null) return { key: spec.key, value, prev: prevValue, delta: null, improved: null };
     const delta = value - prevValue;
-    return { key, value, prev: prevValue, delta, improved: delta === 0 ? null : higherIsBetter ? delta > 0 : delta < 0 };
+    return { key: spec.key, value, prev: prevValue, delta, improved: improved(spec, delta) };
   });
 }
 
-function directions(metrics: MetricResult[]): string {
+/** Directions for the prompt. `specs` gives each metric's direction; a stored entry may predate a change of metrics. */
+function directions(metrics: MetricResult[], specs: MetricSpec[]): string {
   return metrics
     .map((m, i) => {
-      const spec = METRICS[i];
-      const better = spec.higherIsBetter ? "higher is better" : "lower is better";
+      const spec = specs.find((s) => s.key === m.key);
+      const better = spec ? (spec.higherIsBetter ? "higher is better" : "lower is better") : "direction unknown";
       const moved =
         m.improved === null ? (m.delta === null ? "no previous value" : "unchanged") : m.improved ? "improved" : "got worse";
       return `- ${m.key}${i === 0 ? " (primary)" : ""}: ${better}; ${moved}`;
@@ -116,9 +105,7 @@ export function findLeakedNumber(value: unknown, numbers: (number | null)[]): st
   return null;
 }
 
-let ai: GoogleGenAI | null = null;
-
-export async function writeEntry(runs: Run[], runId: string, notes: string): Promise<Entry> {
+export async function writeEntry(runs: Run[], runId: string, notes: string, opts: WriteOptions): Promise<Entry> {
   const oldestFirst = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const i = oldestFirst.findIndex((r) => r.id === runId);
   if (i === -1) throw new EntryError(`Run ${runId} isn't in this W&B project.`, 404);
@@ -126,7 +113,8 @@ export async function writeEntry(runs: Run[], runId: string, notes: string): Pro
   const prev = i > 0 ? oldestFirst[i - 1] : null;
 
   const changes = configChanges(prev, run);
-  const metrics = metricResults(prev, run);
+  const specs = metricList(opts.metrics);
+  const metrics = metricResults(prev, run, specs);
 
   const prompt = `MY SPOKEN NOTES
 """
@@ -143,12 +131,19 @@ CONFIG CHANGES (computed from W&B, authoritative)
 ${changes.length ? changes.map((c) => `- ${c.key}: ${JSON.stringify(c.from)} -> ${JSON.stringify(c.to)}`).join("\n") : "- none"}
 
 METRIC DIRECTIONS (computed from W&B)
-${directions(metrics)}`;
+${directions(metrics, specs)}`;
 
-  const { value: draft, model } = await generate(EntryDraftSchema, SYSTEM, prompt, "Write entry", (d) => {
-    const leak = leakedMetric(d, metrics);
-    return leak ? `Your last reply included the metric value ${leak}. Remove all metric values; say only whether metrics improved or got worse.` : null;
-  });
+  const { value: draft, model } = await generate(
+    EntryDraftSchema,
+    SYSTEM,
+    prompt,
+    "Write entry",
+    (d) => {
+      const leak = leakedMetric(d, metrics);
+      return leak ? `Your last reply included the metric value ${leak}. Remove all metric values; say only whether metrics improved or got worse.` : null;
+    },
+    { geminiKey: opts.geminiKey },
+  );
 
   return {
     ...cleanDraft(draft),
@@ -177,6 +172,7 @@ export async function fixEntry(
   notes: string,
   correction: string,
   loggedConfig: Record<string, unknown> | null,
+  opts: WriteOptions,
 ): Promise<{ notes: string; entry: Entry }> {
   const { metrics, config_changes, prev_run, model: _model, ...draft } = current;
   void _model;
@@ -201,16 +197,23 @@ CONFIG CHANGES VS PREVIOUS RUN (computed from W&B, authoritative)
 ${config_changes.length ? config_changes.map((c) => `- ${c.key}: ${JSON.stringify(c.from)} -> ${JSON.stringify(c.to)}`).join("\n") : "- none"}
 
 METRIC DIRECTIONS (computed from W&B)
-${directions(metrics)}`;
+${directions(metrics, metricList(opts.metrics))}`;
 
-  const { value: fixed, model } = await generate(FixResultSchema, FIX_SYSTEM, prompt, "Apply fix", (r) => {
-    const leak = leakedMetric(r.entry, metrics);
-    if (leak) return `Your last reply included the metric value ${leak} in the entry. Remove all metric values from the entry.`;
-    if (r.notes.trim().length < notes.trim().length * 0.6) {
-      return "Your corrected notes dropped too much of the original. Keep the original notes word for word except where the correction applies.";
-    }
-    return null;
-  });
+  const { value: fixed, model } = await generate(
+    FixResultSchema,
+    FIX_SYSTEM,
+    prompt,
+    "Apply fix",
+    (r) => {
+      const leak = leakedMetric(r.entry, metrics);
+      if (leak) return `Your last reply included the metric value ${leak} in the entry. Remove all metric values from the entry.`;
+      if (r.notes.trim().length < notes.trim().length * 0.6) {
+        return "Your corrected notes dropped too much of the original. Keep the original notes word for word except where the correction applies.";
+      }
+      return null;
+    },
+    { geminiKey: opts.geminiKey },
+  );
 
   return {
     notes: fixed.notes.trim(),
@@ -224,8 +227,9 @@ function cleanDraft(draft: EntryDraft): EntryDraft {
 }
 
 /**
- * Calls Gemini for strict JSON, validates it with Zod, and retries once with feedback
+ * Asks the model for strict JSON, validates it with Zod, and retries once with feedback
  * if the reply is malformed or `check` objects. A check failure on the last try is accepted.
+ * `geminiKey` is a visitor's own key; null uses the server's.
  */
 export async function generate<T>(
   schema: z.ZodType<T>,
@@ -233,38 +237,28 @@ export async function generate<T>(
   prompt: string,
   action: string,
   check: (value: T) => string | null,
-  { temperature = 0.3 }: { temperature?: number } = {},
+  { temperature = 0.3, geminiKey = null }: { temperature?: number; geminiKey?: string | null } = {},
 ): Promise<{ value: T; model: string }> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new EntryError("No Gemini API key found. Add GEMINI_API_KEY to .env.local.", 500);
-  ai ??= new GoogleGenAI({ apiKey: key });
-
   const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
   delete jsonSchema.$schema;
 
   let value: T | null = null;
-  let model = MODELS[0];
+  let model = "";
   let feedback = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const reply = await callWithFallback(
-      ai,
-      {
-        contents: prompt + feedback,
-        config: {
-          systemInstruction: system,
-          responseMimeType: "application/json",
-          responseJsonSchema: jsonSchema,
-          temperature,
-        },
-      },
+    const reply = await callModel({
+      visitorKey: geminiKey,
+      system,
+      prompt: prompt + feedback,
+      jsonSchema,
+      temperature,
       action,
-    );
-    const text = reply.text;
+    });
     model = reply.model;
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text ?? "");
+      parsed = JSON.parse(reply.text ?? "");
     } catch {
       feedback = "\n\nYour last reply wasn't valid JSON. Reply with only the JSON object.";
       continue;
@@ -282,66 +276,6 @@ export async function generate<T>(
     }
     break;
   }
-  if (!value) throw new EntryError(`Gemini didn't return a valid entry. Press ${action} to try again.`);
+  if (!value) throw new EntryError(`The model didn't return a valid entry. Press ${action} to try again.`);
   return { value, model };
-}
-
-/** Models that ran out of quota, and when to try them again. Lives as long as the server process. */
-const exhaustedUntil = new Map<string, number>();
-
-function retryAfterMs(message: string): number {
-  const s = message.match(/retry(?:Delay)?[^0-9]{0,12}(\d+(?:\.\d+)?)s/i);
-  // No hint: a per-minute limit clears in a minute; a daily one we re-check hourly.
-  return s ? Number(s[1]) * 1000 : /PerDay/i.test(message) ? 3_600_000 : 60_000;
-}
-
-/**
- * Tries each model in MODELS in order. A model that's out of quota is skipped until its
- * quota resets; an overloaded one gets one quick retry before moving on.
- */
-async function callWithFallback(
-  client: GoogleGenAI,
-  request: Omit<Parameters<GoogleGenAI["models"]["generateContent"]>[0], "model">,
-  action: string,
-): Promise<{ text: string | undefined; model: string }> {
-  const now = Date.now();
-  const available = MODELS.filter((m) => (exhaustedUntil.get(m) ?? 0) <= now);
-  let overloaded = false;
-
-  for (const model of available) {
-    for (let tries = 0; tries < 2; tries++) {
-      try {
-        const res = await client.models.generateContent({ ...request, model });
-        return { text: res.text, model };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (/\b429\b|quota|RESOURCE_EXHAUSTED/i.test(message)) {
-          exhaustedUntil.set(model, Date.now() + retryAfterMs(message));
-          console.warn(`Gemini ${model} is out of quota; trying the next model.`);
-          break;
-        }
-        if (/\b50[03]\b|\b404\b|UNAVAILABLE|INTERNAL|NOT_FOUND|overloaded|high demand/i.test(message)) {
-          overloaded = true;
-          if (tries === 0 && !/\b404\b|NOT_FOUND/.test(message)) {
-            await new Promise((r) => setTimeout(r, 1500));
-            continue;
-          }
-          break;
-        }
-        throw new EntryError(`Gemini request failed: ${message.slice(0, 200)}`);
-      }
-    }
-  }
-
-  if (overloaded) {
-    throw new EntryError(`Gemini is overloaded right now. Wait a few seconds and press ${action} again.`, 503);
-  }
-  const soonest = Math.min(...MODELS.map((m) => exhaustedUntil.get(m) ?? now));
-  const minutes = Math.max(1, Math.round((soonest - now) / 60_000));
-  const wait = minutes < 90 ? `${minutes} min` : `about ${Math.round(minutes / 60)} h`;
-  throw new EntryError(
-    `Gemini's free quota is used up on every model (${MODELS.join(", ")}). It frees up in ${wait}. ` +
-      `To keep going now, set GEMINI_API_KEY to a key with billing enabled.`,
-    429,
-  );
 }

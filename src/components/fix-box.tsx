@@ -4,12 +4,14 @@ import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { SavedEntry } from "@/lib/entry-schema";
+import { useApiFetch } from "@/components/api-context";
 
 export function FixBox({ runId, onFixed }: { runId: string; onFixed: (entry: SavedEntry) => void }) {
   const [correction, setCorrection] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
+  const apiFetch = useApiFetch();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -17,7 +19,7 @@ export function FixBox({ runId, onFixed }: { runId: string; onFixed: (entry: Sav
     setPending(true);
     setError(null);
     try {
-      const res = await fetch("/api/entry/fix", {
+      const res = await apiFetch("/api/entry/fix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId, correction }),

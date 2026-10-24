@@ -9,6 +9,15 @@ const MAX_RUNS = 500;
 
 export type Scalar = string | number | boolean | null;
 
+/** Where runs come from: the owner's project (env key) or a visitor's (key from their browser tab). */
+export type WandbSource = {
+  key: string;
+  entity: string;
+  project: string;
+  /** true for the owner's journal; changes where error messages tell people to look. */
+  owner: boolean;
+};
+
 export type Run = {
   id: string;
   name: string;
@@ -102,7 +111,8 @@ function toIso(createdAt: string): string {
   return /[zZ]|[+-]\d\d:?\d\d$/.test(createdAt) ? createdAt : `${createdAt}Z`;
 }
 
-export async function fetchRuns(): Promise<Run[]> {
+/** The owner's project, using the server's WANDB key. */
+export function ownerSource(): WandbSource {
   const key = process.env.WANDB;
   if (!key) {
     throw new WandbError(
@@ -110,24 +120,45 @@ export async function fetchRuns(): Promise<Run[]> {
       500,
     );
   }
+  return { key, entity: WANDB_ENTITY, project: WANDB_PROJECT, owner: true };
+}
 
-  const auth = `Basic ${Buffer.from(`api:${key}`).toString("base64")}`;
+/** W&B entity and project names: letters, digits, dot, dash, underscore. */
+export const WANDB_NAME = /^[A-Za-z0-9._-]{1,128}$/;
+
+function runUrl(source: WandbSource, runId: string): string {
+  return `https://wandb.ai/${encodeURIComponent(source.entity)}/${encodeURIComponent(source.project)}/runs/${encodeURIComponent(runId)}`;
+}
+
+export function projectUrl(source: Pick<WandbSource, "entity" | "project">): string {
+  return `https://wandb.ai/${encodeURIComponent(source.entity)}/${encodeURIComponent(source.project)}`;
+}
+
+/** Every run in the project (up to MAX_RUNS), newest first. The key never appears in errors. */
+export async function fetchRuns(source: WandbSource = ownerSource()): Promise<Run[]> {
+  const auth = `Basic ${Buffer.from(`api:${source.key}`).toString("base64")}`;
+  const where = source.owner ? "the WANDB value in .env.local" : "it on the Connect page";
   const runs: Run[] = [];
   let cursor: string | null = null;
 
   do {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: auth },
-      body: JSON.stringify({
-        query: RUNS_QUERY,
-        variables: { entity: WANDB_ENTITY, project: WANDB_PROJECT, first: PAGE_SIZE, cursor },
-      }),
-      cache: "no-store",
-    });
+    let res: Response;
+    try {
+      res = await fetch(GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: auth },
+        body: JSON.stringify({
+          query: RUNS_QUERY,
+          variables: { entity: source.entity, project: source.project, first: PAGE_SIZE, cursor },
+        }),
+        cache: "no-store",
+      });
+    } catch {
+      throw new WandbError("Couldn't reach W&B. Try again in a moment.", 502);
+    }
 
     if (res.status === 401 || res.status === 403) {
-      throw new WandbError("W&B rejected the API key. Check the WANDB value in .env.local.", 401);
+      throw new WandbError(`W&B rejected the API key. Check ${where}.`, 401);
     }
     if (!res.ok) {
       throw new WandbError(`W&B returned HTTP ${res.status}. Try again in a moment.`, 502);
@@ -135,12 +166,12 @@ export async function fetchRuns(): Promise<Run[]> {
 
     const body = (await res.json()) as RunsResponse;
     if (body.errors?.length) {
-      throw new WandbError(`W&B query failed: ${body.errors[0].message}`, 502);
+      throw new WandbError(`W&B query failed: ${body.errors[0].message.slice(0, 200)}`, 502);
     }
     const project = body.data?.project;
     if (!project) {
       throw new WandbError(
-        `Project ${WANDB_ENTITY}/${WANDB_PROJECT} not found, or this API key can't see it.`,
+        `Project ${source.entity}/${source.project} not found, or this API key can't see it.`,
         404,
       );
     }
@@ -153,7 +184,7 @@ export async function fetchRuns(): Promise<Run[]> {
         createdAt: toIso(node.createdAt),
         config: unwrapConfig(node.config),
         summary: cleanSummary(node.summaryMetrics),
-        url: `https://wandb.ai/${WANDB_ENTITY}/${WANDB_PROJECT}/runs/${node.name}`,
+        url: runUrl(source, node.name),
       });
     }
 
@@ -161,4 +192,20 @@ export async function fetchRuns(): Promise<Run[]> {
   } while (cursor && runs.length < MAX_RUNS);
 
   return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/** For the Connect page: how many runs, and which numeric summary metrics they log (most common first). */
+export async function inspectProject(source: WandbSource): Promise<{ runCount: number; metricKeys: string[] }> {
+  const runs = await fetchRuns(source);
+  const counts = new Map<string, number>();
+  for (const run of runs) {
+    for (const [key, value] of Object.entries(run.summary)) {
+      if (typeof value === "number" && Number.isFinite(value)) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const metricKeys = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([key]) => key)
+    .slice(0, 60);
+  return { runCount: runs.length, metricKeys };
 }

@@ -1,12 +1,5 @@
 import type { Run, Scalar } from "@/lib/wandb";
-
-export type MetricSpec = {
-  key: string;
-  higherIsBetter: boolean;
-};
-
-export const RMSE: MetricSpec = { key: "val_rmse", higherIsBetter: false };
-export const PEARSON: MetricSpec = { key: "val_pearson", higherIsBetter: true };
+import { improved, type MetricSet, type MetricSpec } from "@/lib/metrics";
 
 export type MetricCell = {
   value: number | null;
@@ -24,8 +17,8 @@ export type LedgerRow = {
   state: string;
   started: string;
   url: string;
-  rmse: MetricCell;
-  pearson: MetricCell;
+  primary: MetricCell;
+  secondary: MetricCell | null;
   isBest: boolean;
   config: Record<string, unknown>;
   summary: Record<string, Scalar>;
@@ -49,7 +42,7 @@ export function num(value: Scalar | undefined): number | null {
 }
 
 /** Turns W&B runs (any order) into ledger rows, newest first. */
-export function buildLedger(runs: Run[]): LedgerRow[] {
+export function buildLedger(runs: Run[], metrics: MetricSet): LedgerRow[] {
   const oldestFirst = [...runs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const last: Record<string, number | null> = {};
 
@@ -60,8 +53,7 @@ export function buildLedger(runs: Run[]): LedgerRow[] {
     last[spec.key] = value;
     if (prev === null) return { value, delta: null, improved: null };
     const delta = value - prev;
-    const improved = delta === 0 ? null : spec.higherIsBetter ? delta > 0 : delta < 0;
-    return { value, delta, improved };
+    return { value, delta, improved: improved(spec, delta) };
   };
 
   const rows = oldestFirst.map((run, i): LedgerRow => ({
@@ -71,16 +63,17 @@ export function buildLedger(runs: Run[]): LedgerRow[] {
     state: run.state,
     started: formatIst(run.createdAt),
     url: run.url,
-    rmse: cell(run, RMSE),
-    pearson: cell(run, PEARSON),
+    primary: cell(run, metrics.primary),
+    secondary: metrics.secondary ? cell(run, metrics.secondary) : null,
     isBest: false,
     config: run.config,
     summary: run.summary,
   }));
 
+  const better = (a: number, b: number) => (metrics.primary.higherIsBetter ? a > b : a < b);
   const best = rows
-    .filter((r) => r.rmse.value !== null)
-    .reduce<LedgerRow | null>((a, r) => (!a || r.rmse.value! < a.rmse.value! ? r : a), null);
+    .filter((r) => r.primary.value !== null)
+    .reduce<LedgerRow | null>((a, r) => (!a || better(r.primary.value!, a.primary.value!) ? r : a), null);
   if (best) best.isBest = true;
 
   return rows.reverse();

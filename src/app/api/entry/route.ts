@@ -1,18 +1,20 @@
 import { after } from "next/server";
-import { regenerateInsights } from "@/lib/insights";
 import { z } from "zod";
+import { chargeWorkspace, errorResponse, NO_STORE, resolveContext, secretsOf } from "@/lib/context";
 import { EntryRequestSchema } from "@/lib/entry-schema";
-import { EntryError, writeEntry } from "@/lib/entry-writer";
-import { requireOwner } from "@/lib/owner";
-import { DbError, saveEntry } from "@/lib/supabase";
-import { fetchRuns, WandbError } from "@/lib/wandb";
+import { writeEntry } from "@/lib/entry-writer";
+import { redact } from "@/lib/errors";
+import { regenerateInsights } from "@/lib/insights";
+import { saveEntry } from "@/lib/supabase";
+import { fetchRuns } from "@/lib/wandb";
 
 // Allows for Gemini retries when it's overloaded.
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
-  const denied = await requireOwner();
-  if (denied) return denied;
+  const resolved = await resolveContext(request, { write: true });
+  if ("response" in resolved) return resolved.response;
+  const { ctx } = resolved;
 
   const body = EntryRequestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
@@ -21,18 +23,22 @@ export async function POST(request: Request) {
   }
 
   try {
+    await chargeWorkspace(request, ctx, { ai: true, write: true });
     // Run data always comes from W&B on the server, never from the browser.
-    const runs = await fetchRuns();
-    const entry = await writeEntry(runs, body.data.runId, body.data.notes);
-    const saved = await saveEntry(body.data.runId, body.data.notes, entry);
+    const runs = await fetchRuns(ctx.source);
+    const entry = await writeEntry(runs, body.data.runId, body.data.notes, { metrics: ctx.metrics, geminiKey: ctx.geminiKey });
+    const saved = await saveEntry(ctx.workspace, body.data.runId, body.data.notes, entry);
     // Rebuild cross-run insights once the response is out; the page polls for the new version.
-    after(() => regenerateInsights(body.data.runId).catch((err) => console.error("Insights regeneration failed:", err)));
-    return Response.json({ entry: saved });
+    after(async () => {
+      try {
+        await chargeWorkspace(request, ctx, { ai: true, write: false });
+        await regenerateInsights(ctx, body.data.runId);
+      } catch (err) {
+        console.error("Insights regeneration skipped:", redact(err instanceof Error ? err.message : String(err), secretsOf(ctx)));
+      }
+    });
+    return Response.json({ entry: saved }, { headers: ctx.visitor ? NO_STORE : undefined });
   } catch (err) {
-    if (err instanceof WandbError || err instanceof EntryError || err instanceof DbError) {
-      return Response.json({ error: err.message }, { status: err.status });
-    }
-    console.error(err);
-    return Response.json({ error: "Couldn't write the entry. Try again." }, { status: 500 });
+    return errorResponse(err, ctx, "Couldn't write the entry. Try again.");
   }
 }

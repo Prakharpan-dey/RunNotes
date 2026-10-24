@@ -1,41 +1,37 @@
 import { connection } from "next/server";
-import { EntryError } from "@/lib/entry-writer";
+import { chargeWorkspace, errorResponse, NO_STORE, resolveContext } from "@/lib/context";
 import { getLatestInsights, regenerateInsights } from "@/lib/insights";
-import { requireOwner } from "@/lib/owner";
-import { DbError } from "@/lib/supabase";
-import { WandbError } from "@/lib/wandb";
 
 // Allows for Gemini retries when it's overloaded.
 export const maxDuration = 120;
 
-function fail(err: unknown) {
-  if (err instanceof WandbError || err instanceof EntryError || err instanceof DbError) {
-    return Response.json({ error: err.message }, { status: err.status });
-  }
-  console.error(err);
-  return Response.json({ error: "Couldn't build insights. Try again." }, { status: 500 });
-}
-
 /** The newest saved insights; the page polls this after an entry is written or fixed. */
-export async function GET() {
+export async function GET(request: Request) {
   await connection();
+  const resolved = await resolveContext(request, { write: false });
+  if ("response" in resolved) return resolved.response;
+  const { ctx } = resolved;
   try {
-    return Response.json({ insights: await getLatestInsights() });
+    const insights = await getLatestInsights({ workspace: ctx.workspace, project: ctx.source.project });
+    return Response.json({ insights }, { headers: ctx.visitor ? NO_STORE : undefined });
   } catch (err) {
-    return fail(err);
+    return errorResponse(err, ctx, "Couldn't load insights.");
   }
 }
 
 /** Rebuilds insights now. Body: { triggerRunId?: string }. */
 export async function POST(request: Request) {
-  const denied = await requireOwner();
-  if (denied) return denied;
+  const resolved = await resolveContext(request, { write: true });
+  if ("response" in resolved) return resolved.response;
+  const { ctx } = resolved;
 
   const body = (await request.json().catch(() => ({}))) as { triggerRunId?: unknown };
   const triggerRunId = typeof body.triggerRunId === "string" ? body.triggerRunId : undefined;
   try {
-    return Response.json({ insights: await regenerateInsights(triggerRunId) });
+    await chargeWorkspace(request, ctx, { ai: true, write: true });
+    const insights = await regenerateInsights(ctx, triggerRunId);
+    return Response.json({ insights }, { headers: ctx.visitor ? NO_STORE : undefined });
   } catch (err) {
-    return fail(err);
+    return errorResponse(err, ctx, "Couldn't build insights. Try again.");
   }
 }

@@ -3,6 +3,7 @@ import { DEMO_LIMIT, DEMO_WINDOW_SECONDS, demoRun } from "@/lib/demo";
 import { EntryError, writeEntry } from "@/lib/entry-writer";
 import type { SavedEntry } from "@/lib/entry-schema";
 import { formatIst } from "@/lib/ledger";
+import { OWNER_METRICS } from "@/lib/metrics";
 import { hitRateLimit } from "@/lib/rate-limit";
 import { DbError } from "@/lib/supabase";
 import { fetchRuns, WandbError } from "@/lib/wandb";
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
     const demo = demoRun(runs);
     if (!demo) return Response.json({ error: "There are no runs to demo yet." }, { status: 404 });
 
-    const entry = await writeEntry(runs, demo.run.id, body.data.notes);
+    const entry = await writeEntry(runs, demo.run.id, body.data.notes, { metrics: OWNER_METRICS, geminiKey: null });
     const now = new Date().toISOString();
     const result: SavedEntry = {
       id: "demo",

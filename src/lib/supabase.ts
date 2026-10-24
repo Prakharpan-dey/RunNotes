@@ -5,6 +5,9 @@ import type { Entry, HistoryItem, SavedEntry } from "@/lib/entry-schema";
 
 let client: SupabaseClient | null = null;
 
+/** The owner's journal. Visitor workspaces are random UUIDs. */
+export const OWNER_WORKSPACE = "owner";
+
 export class DbError extends Error {
   constructor(
     message: string,
@@ -33,6 +36,7 @@ export type EntryRow = {
   created_at: string;
   updated_at?: string | null;
   history?: HistoryItem[];
+  workspace?: string;
 };
 
 function toSaved(row: EntryRow): SavedEntry {
@@ -48,9 +52,12 @@ function toSaved(row: EntryRow): SavedEntry {
   };
 }
 
-function explain(message: string): string {
+export function explain(message: string): string {
   if (/relation .*entries.* does not exist|Could not find the table/i.test(message)) {
     return "The entries table doesn't exist yet. Run supabase/entries.sql in the Supabase SQL editor.";
+  }
+  if (/workspace/i.test(message)) {
+    return "The database isn't set up for workspaces yet. Run supabase/005_workspaces.sql in the Supabase SQL editor.";
   }
   if (/history|updated_at/i.test(message)) {
     return "The entries table is missing the history column. Run supabase/002_entry_history.sql in the Supabase SQL editor.";
@@ -58,26 +65,35 @@ function explain(message: string): string {
   return `Supabase error: ${message}`;
 }
 
-export async function getEntries(): Promise<Record<string, SavedEntry>> {
-  const { data, error } = await db().from("entries").select("*").order("created_at", { ascending: false });
+export async function getEntries(workspace: string): Promise<Record<string, SavedEntry>> {
+  const { data, error } = await db()
+    .from("entries")
+    .select("*")
+    .eq("workspace", workspace)
+    .order("created_at", { ascending: false });
   if (error) throw new DbError(explain(error.message));
   const byRun: Record<string, SavedEntry> = {};
   for (const row of data as EntryRow[]) byRun[row.run_id] ??= toSaved(row);
   return byRun;
 }
 
-export async function getEntryRow(runId: string): Promise<EntryRow | null> {
-  const { data, error } = await db().from("entries").select("*").eq("run_id", runId).maybeSingle();
+export async function getEntryRow(workspace: string, runId: string): Promise<EntryRow | null> {
+  const { data, error } = await db()
+    .from("entries")
+    .select("*")
+    .eq("workspace", workspace)
+    .eq("run_id", runId)
+    .maybeSingle();
   if (error) throw new DbError(explain(error.message));
   return data as EntryRow | null;
 }
 
-export async function saveEntry(runId: string, rawNotes: string, entry: Entry): Promise<SavedEntry> {
+export async function saveEntry(workspace: string, runId: string, rawNotes: string, entry: Entry): Promise<SavedEntry> {
   const { data, error } = await db()
     .from("entries")
     .upsert(
-      { run_id: runId, raw_notes: rawNotes, entry, created_at: new Date().toISOString() },
-      { onConflict: "run_id" },
+      { workspace, run_id: runId, raw_notes: rawNotes, entry, created_at: new Date().toISOString() },
+      { onConflict: "workspace,run_id" },
     )
     .select("*")
     .single();
@@ -106,9 +122,9 @@ export async function applyFix(row: EntryRow, rawNotes: string, entry: Entry, co
   return toSaved(data as EntryRow);
 }
 
-/** Every entry row, for building insights. */
-export async function getEntryRows(): Promise<EntryRow[]> {
-  const { data, error } = await db().from("entries").select("*");
+/** Every entry row in a workspace, for building insights. */
+export async function getEntryRows(workspace: string): Promise<EntryRow[]> {
+  const { data, error } = await db().from("entries").select("*").eq("workspace", workspace);
   if (error) throw new DbError(explain(error.message));
   return data as EntryRow[];
 }
